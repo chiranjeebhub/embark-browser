@@ -6,7 +6,6 @@ import WebKit
 @MainActor
 final class WebKitEngine: BrowserEngine {
     private var stores: [Profile.ID: WKWebsiteDataStore] = [:]
-    private let processPool = WKProcessPool()
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
         let store = stores[profile.id] ?? WKWebsiteDataStore(forIdentifier: profile.id)
