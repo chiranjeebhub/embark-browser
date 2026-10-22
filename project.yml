@@ -1,4 +1,9 @@
 # Generate the Xcode project with: xcodegen generate
+#
+# Targets:
+#   Embark          WebKit development engine. Builds with no downloads.
+#   EmbarkChromium  Chromium engine via CEF. Run scripts/fetch-cef.sh first.
+#   EmbarkHelper    Chromium's helper process, embedded into EmbarkChromium.
 name: Embark
 options:
   bundleIdPrefix: dev.embark
@@ -10,6 +15,8 @@ settings:
     SWIFT_STRICT_CONCURRENCY: minimal
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+    CLANG_CXX_LANGUAGE_STANDARD: c++20
+    CLANG_ENABLE_OBJC_ARC: YES
 targets:
   Embark:
     type: application
@@ -25,5 +32,51 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Embark
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        # Set to CEF once scripts/fetch-cef.sh has run; see docs/ARCHITECTURE.md.
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ENGINE_WEBKIT"
+
+  EmbarkChromium:
+    type: application
+    platform: macOS
+    sources:
+      - path: Embark
+        excludes:
+          - "Engine/CEF/HelperMain.mm"
+    dependencies:
+      - target: EmbarkHelper
+        embed: false
+    settings:
+      base:
+        PRODUCT_NAME: Embark
+        PRODUCT_BUNDLE_IDENTIFIER: dev.embark.browser
+        # Separate output folder so this app doesn't overwrite the WebKit build of the same name.
+        CONFIGURATION_BUILD_DIR: "$(BUILD_DIR)/$(CONFIGURATION)-chromium"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Embark
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_NSPrincipalClass: EMBApplication
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ENGINE_CEF"
+        SWIFT_OBJC_BRIDGING_HEADER: Embark/Engine/CEF/Embark-Bridging-Header.h
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/cef"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/Vendor/cef/build/libcef_dll_wrapper"
+        OTHER_LDFLAGS: "-lcef_dll_wrapper"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Embed Chromium and helpers
+        script: '"$SRCROOT/scripts/embed-cef.sh"'
+        basedOnDependencyAnalysis: false
+
+  EmbarkHelper:
+    type: application
+    platform: macOS
+    sources:
+      - path: Embark/Engine/CEF/HelperMain.mm
+    settings:
+      base:
+        PRODUCT_NAME: Embark Helper
+        PRODUCT_BUNDLE_IDENTIFIER: dev.embark.browser.helper
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/cef"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/Vendor/cef/build/libcef_dll_wrapper"
+        OTHER_LDFLAGS: "-lcef_dll_wrapper"

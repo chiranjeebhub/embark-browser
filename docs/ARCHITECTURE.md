@@ -36,18 +36,24 @@ Code lives in `Engine/CEF`:
 - `CEFEngine.swift`: the Swift `BrowserEngine` on top of the bridge.
 - `HelperMain.mm`: entry point for the Chromium helper processes.
 
-Bringing it up on a Mac:
+Building it:
 
-1. `scripts/fetch-cef.sh` downloads the current stable CEF build into `Vendor/cef` and
-   builds `libcef_dll_wrapper`.
-2. In `project.yml`, stop excluding `Engine/CEF`, add a bridging header that imports
-   `CEFBridge.h`, add `Vendor/cef` to the header search paths, link
-   `libcef_dll_wrapper.a`, and embed `Chromium Embedded Framework.framework` in
-   `Contents/Frameworks`.
-3. Add a helper app target built from `HelperMain.mm`, copied four times into
-   `Contents/Frameworks` as `Embark Helper.app`, `Embark Helper (GPU).app`,
-   `Embark Helper (Renderer).app` and `Embark Helper (Plugin).app`.
-4. Set `NSPrincipalClass` to `EMBApplication` and switch the compilation condition to
-   `ENGINE_CEF`.
+```sh
+scripts/fetch-cef.sh          # downloads stable CEF into Vendor/cef, builds libcef_dll_wrapper
+xcodegen generate
+xcodebuild -scheme EmbarkChromium build   # or pick the EmbarkChromium scheme in Xcode
+```
 
-This part has not been compiled yet. Expect a round of fixes on the first real build.
+How the pieces fit:
+
+- `EmbarkChromium` compiles the same app with `ENGINE_CEF`, the bridging header
+  `Engine/CEF/Embark-Bridging-Header.h`, and links `libcef_dll_wrapper`. Its
+  `NSPrincipalClass` is `EMBApplication`, which CEF requires.
+- The Chromium framework is loaded at runtime by `CefScopedLibraryLoader`, so nothing
+  links against it. `scripts/embed-cef.sh` copies it into `Contents/Frameworks`.
+- `EmbarkHelper` is built once from `HelperMain.mm` and copied by the same script as
+  `Embark Helper`, `(GPU)`, `(Renderer)`, `(Plugin)` and `(Alerts)`.
+- The Chromium sandbox is off for now (`no_sandbox`). Turning it on means linking
+  `cef_sandbox` into the helpers.
+
+CI builds both engines on every pull request (`.github/workflows/build.yml`).

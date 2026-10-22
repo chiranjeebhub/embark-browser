@@ -58,7 +58,8 @@ private:
     CefMainArgs args(0, nullptr);
     CefSettings settings;
     settings.external_message_pump = true;
-    settings.no_sandbox = false;
+    // The macOS sandbox needs cef_sandbox linked into every helper; turned off until then.
+    settings.no_sandbox = true;
     CefString(&settings.root_cache_path) = cacheRoot.path.UTF8String;
     CefString(&settings.cache_path) = [cacheRoot URLByAppendingPathComponent:@"Default"].path.UTF8String;
 

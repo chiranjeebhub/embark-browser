@@ -25,7 +25,8 @@ xcodegen generate
 open Embark.xcodeproj
 ```
 
-To build with Chromium, run `scripts/fetch-cef.sh` and follow the steps in
+That builds the `Embark` scheme, which uses WebKit and needs no downloads. To build with
+Chromium, run `scripts/fetch-cef.sh` first, then build the `EmbarkChromium` scheme. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#chromium-via-cef).
 
 ## Shortcuts
