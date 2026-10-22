@@ -39,6 +39,19 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build | tee build.log
 
+      - name: Summarize build
+        if: always()
+        run: |
+          # Surface the result as annotations so it is readable without downloading logs.
+          echo "::notice title=Toolchain::$(xcodebuild -version | tr '\n' ' ') on macOS $(sw_vers -productVersion)"
+          echo "::notice title=Result::$(grep -E 'BUILD (SUCCEEDED|FAILED)' build.log | tail -1), $(grep -cE '^SwiftCompile|^CompileSwift' build.log) Swift compile steps"
+          grep -E ': (error|warning): ' build.log | sort -u | head -40 | while IFS= read -r line; do
+            case "$line" in
+              *": error: "*) echo "::error::${line#$GITHUB_WORKSPACE/}" ;;
+              *) echo "::warning::${line#$GITHUB_WORKSPACE/}" ;;
+            esac
+          done
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
