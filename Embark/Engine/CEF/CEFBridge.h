@@ -7,7 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @protocol EMBCEFBrowserDelegate <NSObject>
 - (void)cefBrowser:(EMBCEFBrowser *)browser didChangeTitle:(nullable NSString *)title;
-- (void)cefBrowser:(EMBCEFBrowser *)browser didChangeURL:(nullable NSURL *)url;
+- (void)cefBrowser:(EMBCEFBrowser *)browser didChangeURL:(nullable NSURL *)url NS_SWIFT_NAME(cefBrowser(_:didChangeURL:));
 - (void)cefBrowser:(EMBCEFBrowser *)browser requestsNewTab:(NSURL *)url;
 - (void)cefBrowserDidChangeNavigationState:(EMBCEFBrowser *)browser;
 @end
