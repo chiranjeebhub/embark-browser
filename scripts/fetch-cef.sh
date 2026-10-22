@@ -12,6 +12,7 @@ case "$(uname -m)" in
 esac
 
 INDEX_URL="https://cef-builds.spotifycdn.com/index.json"
+echo "Reading $INDEX_URL for $PLATFORM"
 FILE=$(curl -fsSL "$INDEX_URL" | python3 -c '
 import json, sys
 platform = sys.argv[1]
