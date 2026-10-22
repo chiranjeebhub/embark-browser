@@ -32,7 +32,7 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
-            build | tee build.log
+            build 2>&1 | tee build.log
 
       - name: Summarize build
         if: always()
@@ -73,7 +73,7 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
-            build | tee build.log
+            build 2>&1 | tee build.log
 
       - name: Check app bundle
         run: |

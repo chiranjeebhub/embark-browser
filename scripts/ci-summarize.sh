@@ -12,3 +12,9 @@ grep -E ': (error|warning): |^ld: |clang: error' "$LOG" | sort -u | head -60 | w
     *) echo "::error title=$LABEL::$line" ;;
   esac
 done
+# Failures that don't match the patterns above (script phases, signing, etc.): show the failed commands.
+if ! grep -q 'BUILD SUCCEEDED' "$LOG"; then
+  grep -E 'error|failed|Failed|FAILED' "$LOG" | grep -v ': warning: ' | sort -u | tail -30 | while IFS= read -r line; do
+    echo "::error title=$LABEL failure::${line#$GITHUB_WORKSPACE/}"
+  done
+fi
