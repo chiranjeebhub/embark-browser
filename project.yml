@@ -1,0 +1,29 @@
+# Generate the Xcode project with: xcodegen generate
+name: Embark
+options:
+  bundleIdPrefix: dev.embark
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Embark:
+    type: application
+    platform: macOS
+    sources:
+      - path: Embark
+        excludes:
+          - "Engine/CEF/**"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.embark.browser
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Embark
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Set to CEF once scripts/fetch-cef.sh has run; see docs/ARCHITECTURE.md.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ENGINE_WEBKIT"
