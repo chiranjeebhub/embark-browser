@@ -104,6 +104,7 @@ struct CommandBar: View {
     private func activate(_ index: Int) {
         let all = results
         guard all.indices.contains(index) else { return }
+        let splitTarget = store.pendingSplitTabID
         switch all[index] {
         case .tab(let tab): store.selectTab(tab.id)
         case .favorite(let fav): store.openFavorite(fav)
@@ -113,10 +114,15 @@ struct CommandBar: View {
             components.queryItems = [URLQueryItem(name: "q", value: q)]
             if let url = components.url { store.openTab(url) }
         }
+        // New Split: whatever was picked becomes a pane beside the tab it started from.
+        if let splitTarget, let picked = store.selectedTab?.id, picked != splitTarget {
+            store.addToSplit(picked, beside: splitTarget)
+        }
         close()
     }
 
     private func close() {
+        store.pendingSplitTabID = nil
         store.isCommandBarOpen = false
     }
 

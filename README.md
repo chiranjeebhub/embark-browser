@@ -53,7 +53,8 @@ doesn't sign and isn't affected.
 | Close tab | ⌘W |
 | Back / forward / reload | ⌘[ / ⌘] / ⌘R |
 | Add to favorites | ⌘D |
-| Split view | ⌘⇧= |
+| New split (pick the new pane in the command bar) | ⌃⇧= |
+| Previous / next pane | ⌃⇧[ / ⌃⇧] |
 | Toggle sidebar | ⌘B or ⌘S |
 | Next / previous space | ⌘⌥→ / ⌘⌥← |
 | Jump to space 1 to 9 | ⌃1 … ⌃9 |

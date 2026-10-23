@@ -163,9 +163,10 @@ private struct AddressPill: View {
 
 /// What a drag inside the sidebar carries. Sent as a plain string so no custom type needs
 /// registering; anything else dropped on the sidebar is ignored.
-private enum SidebarDrag: Equatable {
+enum SidebarDrag: Equatable {
     case tab(BrowserTab.ID)
     case favorite(Favorite.ID)
+    case split(Split.ID)
 
     /// The drag in progress, so drop targets can show its placeholder while hovering. Drops
     /// themselves trust only the dragged string, since this can be stale after a cancelled drag.
@@ -175,7 +176,13 @@ private enum SidebarDrag: Equatable {
         switch self {
         case .tab(let id): "embark-tab:\(id.uuidString)"
         case .favorite(let id): "embark-favorite:\(id.uuidString)"
+        case .split(let id): "embark-split:\(id.uuidString)"
         }
+    }
+
+    /// Tabs and favorites can become split panes; a whole split can't.
+    var canSplit: Bool {
+        if case .split = self { false } else { true }
     }
 
     init?(token: String) {
@@ -184,6 +191,7 @@ private enum SidebarDrag: Equatable {
         switch parts[0] {
         case "embark-tab": self = .tab(id)
         case "embark-favorite": self = .favorite(id)
+        case "embark-split": self = .split(id)
         default: return nil
         }
     }
@@ -192,12 +200,16 @@ private enum SidebarDrag: Equatable {
         switch self {
         case .tab(let id): space.tabs.first { $0.id == id }?.url
         case .favorite(let id): space.favorites.first { $0.id == id }?.url
+        case .split(let id):
+            space.splits?.first { $0.id == id }.flatMap { split in space.tabs.first { $0.id == split.tabIDs.first }?.url }
         }
     }
 
-    /// Starts dragging this item; used with `.onDrag`.
-    @MainActor func itemProvider() -> NSItemProvider {
+    /// Starts dragging this item; used with `.onDrag`. Pages stop taking drops until the drag
+    /// ends, so it can land on the page area to make a split.
+    @MainActor func itemProvider(pool: PagePool) -> NSItemProvider {
         Self.current = self
+        pool.suspendPageDrops()
         return NSItemProvider(object: token as NSString)
     }
 
@@ -240,6 +252,7 @@ private struct DropPlaceholder: View {
 private struct FavoritesGrid: View {
     let favorites: [Favorite]
     @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
     /// The placeholder's index among the tiles, while a drag hovers the grid.
     @State private var placeholder: Int?
     @State private var width: CGFloat = 0
@@ -303,7 +316,7 @@ private struct FavoritesGrid: View {
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
         .help(favorite.title)
-        .onDrag { SidebarDrag.favorite(favorite.id).itemProvider() }
+        .onDrag { SidebarDrag.favorite(favorite.id).itemProvider(pool: pool) }
         .contextMenu {
             Button("Remove from Favorites", role: .destructive) { store.removeFavorite(favorite.id) }
         }
@@ -320,7 +333,7 @@ private struct FavoritesGrid: View {
     private struct DropHandler: DropDelegate {
         let grid: FavoritesGrid
 
-        func validateDrop(info: DropInfo) -> Bool { SidebarDrag.current != nil }
+        func validateDrop(info: DropInfo) -> Bool { SidebarDrag.current?.canSplit == true }
 
         func dropUpdated(info: DropInfo) -> DropProposal? {
             let index = grid.dropIndex(at: info.location)
@@ -344,7 +357,7 @@ private struct FavoritesGrid: View {
                     case .favorite(let id):
                         let from = favorites.firstIndex { $0.id == id } ?? index
                         store.moveFavorite(id, before: index >= from ? index + 1 : index)
-                    case nil: break
+                    case .split, nil: break
                     }
                 }
                 SidebarDrag.current = nil
@@ -353,7 +366,9 @@ private struct FavoritesGrid: View {
     }
 }
 
-/// Open tabs. Dragging a tab or favorite over the list opens a row-height gap at the drop spot.
+/// Open tabs, with each split as one row. Dragging a tab, favorite or split over the list
+/// opens a row-height gap at the drop spot. ⌘- or ⇧-click marks several tabs, to open them
+/// in split view from the context menu.
 private struct TabList: View {
     let space: Space
     @Environment(BrowserStore.self) private var store
@@ -361,28 +376,50 @@ private struct TabList: View {
     @Namespace private var selection
     /// The gap's index among the rows, while a drag hovers the list.
     @State private var gap: Int?
+    /// Tabs marked with ⌘- or ⇧-click.
+    @State private var marked: [BrowserTab.ID] = []
 
     private static let headerHeight: CGFloat = 34
     private static let rowHeight: CGFloat = 36
     private static let spacing: CGFloat = 2
 
     private enum Row: Identifiable {
-        case tab(BrowserTab), gap
+        case tab(BrowserTab), split(Split, [BrowserTab]), gap
         var id: String {
             switch self {
             case .tab(let tab): tab.id.uuidString
+            case .split(let split, _): split.id.uuidString
             case .gap: "gap"
+            }
+        }
+        var firstTabID: BrowserTab.ID? {
+            switch self {
+            case .tab(let tab): tab.id
+            case .split(_, let tabs): tabs.first?.id
+            case .gap: nil
             }
         }
     }
 
-    /// Tabs other than the one being dragged, which gives up its row to the gap.
-    private var staying: [BrowserTab] {
-        space.tabs.filter { gap == nil || SidebarDrag.current != .tab($0.id) }
+    /// Rows other than the one being dragged, which gives up its place to the gap. A split
+    /// shows once, where its first tab is.
+    private var staying: [Row] {
+        let dragged = gap == nil ? nil : SidebarDrag.current
+        var rows: [Row] = []
+        var shown = Set<Split.ID>()
+        for tab in space.tabs where dragged != .tab(tab.id) {
+            if let split = space.splits?.first(where: { $0.tabIDs.contains(tab.id) }) {
+                guard dragged != .split(split.id), shown.insert(split.id).inserted else { continue }
+                rows.append(.split(split, split.tabIDs.compactMap { id in space.tabs.first { $0.id == id } }))
+            } else {
+                rows.append(.tab(tab))
+            }
+        }
+        return rows
     }
 
     private var rows: [Row] {
-        var rows = staying.map(Row.tab)
+        var rows = staying
         if let gap { rows.insert(.gap, at: min(gap, rows.count)) }
         return rows
     }
@@ -402,8 +439,14 @@ private struct TabList: View {
                 ForEach(rows) { row in
                     switch row {
                     case .tab(let tab):
-                        TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, namespace: selection)
-                            .onDrag { SidebarDrag.tab(tab.id).itemProvider() }
+                        TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, isMarked: marked.contains(tab.id),
+                               splitCandidates: marked.count >= 2 && marked.contains(tab.id) ? marked : [],
+                               namespace: selection, onSelect: { select(tab.id) }, onSplit: { marked = [] })
+                            .onDrag { SidebarDrag.tab(tab.id).itemProvider(pool: pool) }
+                    case .split(let split, let tabs):
+                        SplitRow(split: split, tabs: tabs, isSelected: split.tabIDs.contains(space.selectedTabID ?? UUID()),
+                                 namespace: selection)
+                            .onDrag { SidebarDrag.split(split.id).itemProvider(pool: pool) }
                     case .gap:
                         DropPlaceholder(url: SidebarDrag.current?.url(in: space), cornerRadius: 10)
                             .frame(height: Self.rowHeight)
@@ -418,6 +461,24 @@ private struct TabList: View {
         }
         .scrollIndicators(.never)
         .animation(.dropReflow, value: rows.map(\.id))
+        .onChange(of: space.id) { marked = [] }
+    }
+
+    /// A plain click selects; ⌘-click toggles a mark and ⇧-click marks a range, starting
+    /// from the selected tab.
+    private func select(_ id: BrowserTab.ID) {
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        let order = staying.compactMap { row -> BrowserTab.ID? in if case .tab(let tab) = row { tab.id } else { nil } }
+        if flags.contains(.command) {
+            if marked.isEmpty, let current = space.selectedTabID, current != id, order.contains(current) { marked = [current] }
+            if let i = marked.firstIndex(of: id) { marked.remove(at: i) } else { marked.append(id) }
+        } else if flags.contains(.shift), let anchor = marked.last ?? space.selectedTabID,
+                  let a = order.firstIndex(of: anchor), let b = order.firstIndex(of: id) {
+            marked = Array(order[min(a, b)...max(a, b)])
+        } else {
+            marked = []
+            store.selectTab(id)
+        }
     }
 
     /// The insertion point nearest the pointer, between rows.
@@ -443,15 +504,19 @@ private struct TabList: View {
         }
 
         func performDrop(info: DropInfo) -> Bool {
-            let index = list.gap ?? list.staying.count
+            let rows = list.staying, row = list.gap ?? rows.count
             let tabs = list.space.tabs, store = list.store, gap = list.$gap
+            // The gap sits before a row; the store wants the index of that row's first tab.
+            let index = rows.indices.contains(row) ? rows[row].firstTabID.flatMap { id in tabs.firstIndex { $0.id == id } } : nil
             return SidebarDrag.load(from: info) { drag in
                 withAnimation(.dropReflow) {
                     gap.wrappedValue = nil
                     switch drag {
-                    case .tab(let id):
-                        let from = tabs.firstIndex { $0.id == id } ?? index
-                        store.moveTab(id, before: index >= from ? index + 1 : index)
+                    case .tab(let id): store.moveTabs([id], before: index)
+                    case .split(let id):
+                        if let split = store.selectedSpace?.splits?.first(where: { $0.id == id }) {
+                            store.moveTabs(split.tabIDs, before: index)
+                        }
                     case .favorite(let id): store.unpinFavorite(id, toTabAt: index)
                     case nil: break
                     }
@@ -465,7 +530,12 @@ private struct TabList: View {
 private struct TabRow: View {
     let tab: BrowserTab
     let isSelected: Bool
+    let isMarked: Bool
+    /// The marked tabs, when this one is among two or more of them.
+    let splitCandidates: [BrowserTab.ID]
     let namespace: Namespace.ID
+    let onSelect: () -> Void
+    let onSplit: () -> Void
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
     @State private var hovering = false
@@ -489,17 +559,77 @@ private struct TabRow: View {
                 Color.clear
                     .glassEffect(.regular.tint(.white.opacity(0.4)), in: .rect(cornerRadius: 10))
                     .glassEffectID("selected-tab", in: namespace)
+            } else if isMarked {
+                RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.14))
             }
         }
         .contentShape(.rect)
-        .onTapGesture { store.selectTab(tab.id) }
+        .onTapGesture(perform: onSelect)
         .onHover { hovering = $0 }
         .contextMenu {
+            if splitCandidates.count >= 2 {
+                Button("Open \(min(splitCandidates.count, Split.maxPanes)) Tabs in Split View") {
+                    store.makeSplit(splitCandidates)
+                    onSplit()
+                }
+            } else if let current = store.selectedTab?.id, current != tab.id {
+                Button("Add to Split View") { store.addToSplit(tab.id, beside: current) }
+            }
             Button("Add to Favorites") { store.addFavorite(from: tab) }
-            Button("Open in Split View") { store.splitTabID = tab.id }
             Divider()
             Button("Close Tab") { pool.close(tab.id); store.closeTab(tab.id) }
         }
+        .animation(.smooth(duration: 0.25), value: isSelected)
+    }
+}
+
+/// A split as one row: each pane's favicon and title side by side, split by thin lines.
+private struct SplitRow: View {
+    let split: Split
+    let tabs: [BrowserTab]
+    let isSelected: Bool
+    let namespace: Namespace.ID
+    @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                if index > 0 {
+                    Rectangle().fill(.primary.opacity(0.2)).frame(width: 1, height: 18)
+                }
+                HStack(spacing: 6) {
+                    FaviconView(url: tab.url, size: 14)
+                    Text(tab.title).lineLimit(1).fontWeight(isSelected ? .semibold : .regular)
+                }
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 2)
+        .frame(height: 36)
+        .background {
+            if isSelected {
+                Color.clear
+                    .glassEffect(.regular.tint(.white.opacity(0.4)), in: .rect(cornerRadius: 10))
+                    .glassEffectID("selected-tab", in: namespace)
+            } else {
+                RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.06))
+            }
+        }
+        .contentShape(.rect)
+        .onTapGesture {
+            // Show the split, focused on the pane used last.
+            if !isSelected, let pane = tabs.max(by: { $0.lastActive < $1.lastActive }) { store.selectTab(pane.id) }
+        }
+        .contextMenu {
+            Button("Separate Tabs") { store.dissolveSplit(split.id) }
+            Divider()
+            Button("Close Split") {
+                for tab in tabs { pool.close(tab.id); store.closeTab(tab.id) }
+            }
+        }
+        .help(tabs.map(\.title).joined(separator: " · "))
         .animation(.smooth(duration: 0.25), value: isSelected)
     }
 }
@@ -609,8 +739,7 @@ private struct NewMenu: View {
             MenuRow(icon: "scribble.variable", title: "New Easel") {}.disabled(true)
             MenuRow(icon: "paintbrush.pointed", title: "New Boost") {}.disabled(true)
             Divider().padding(.vertical, 3)
-            MenuRow(icon: "rectangle.split.2x1", title: "New Split", shortcut: "⇧⌘=") { run { store.toggleSplit() } }
-                .disabled((store.selectedSpace?.tabs.count ?? 0) < 2)
+            MenuRow(icon: "rectangle.split.2x1", title: "New Split", shortcut: "⌃⇧=") { run { store.startNewSplit() } }
             MenuRow(icon: "plus", title: "New Tab", shortcut: "⌘T") { run { store.isCommandBarOpen = true } }
         }
         .padding(6)
