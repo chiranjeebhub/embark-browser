@@ -22,6 +22,11 @@ struct Sidebar: View {
     }
 }
 
+extension Animation {
+    /// Showing and hiding the sidebar should feel instant.
+    static let sidebar = Animation.snappy(duration: 0.16)
+}
+
 struct NavigationRow: View {
     /// Pushes the page buttons to the sidebar's right edge; off when the sidebar is hidden.
     var spread = true
@@ -33,7 +38,7 @@ struct NavigationRow: View {
         let _ = pool.revision
         // Shares the title bar row with the traffic lights, so the sidebar starts at the top.
         HStack(spacing: 6) {
-            Button { withAnimation(.smooth) { store.isSidebarVisible.toggle() } } label: {
+            Button { withAnimation(.sidebar) { store.isSidebarVisible.toggle() } } label: {
                 Image(systemName: "sidebar.left")
             }
             .help(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")

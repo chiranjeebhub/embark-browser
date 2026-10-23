@@ -87,7 +87,7 @@ struct BrowserCommands: Commands {
         }
         CommandGroup(after: .sidebar) {
             Button(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
-                withAnimation(.smooth) { store.isSidebarVisible.toggle() }
+                withAnimation(.sidebar) { store.isSidebarVisible.toggle() }
             }
             .keyboardShortcut("s")
         }
