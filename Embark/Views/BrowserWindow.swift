@@ -47,8 +47,8 @@ struct BrowserWindow: View {
             if !store.isSidebarVisible { peekingSidebar(tint: tint) }
         }
         .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false }
-        .background(WindowButtons(isVisible: store.isSidebarVisible || isPeeking,
-                                  offset: isPeeking && !store.isSidebarVisible ? Self.peekInset : 0))
+        // While peeking, the card draws its own traffic lights (see CardTrafficLights).
+        .background(WindowButtons(isVisible: store.isSidebarVisible))
         .background {
             ZStack {
                 Rectangle().fill(.background)
@@ -70,7 +70,7 @@ struct BrowserWindow: View {
         if isPeeking {
             // A card inset from the window. The sidebar inside keeps its usual margins and width,
             // so everything sits as far from the card's edges as it does from the window's when
-            // pinned; the traffic lights move by the same inset (see WindowButtons).
+            // pinned; its traffic lights sit at the same spot relative to the card.
             Sidebar()
                 .padding(.bottom, 4)
                 .frame(width: 264)
@@ -80,6 +80,10 @@ struct BrowserWindow: View {
                     Color.clear
                         .glassEffect(.regular.tint(tint.opacity(0.25)), in: .rect(cornerRadius: 17 - Self.peekInset))
                         .shadow(color: .black.opacity(0.25), radius: 16, x: 2, y: 4)
+                }
+                .overlay(alignment: .topLeading) {
+                    // Where the system lights sit relative to the window, but relative to the card.
+                    CardTrafficLights().padding(.leading, 9).padding(.top, 9)
                 }
                 .padding([.top, .bottom, .leading], Self.peekInset)
                 .onHover(perform: peek)
@@ -136,6 +140,17 @@ struct BrowserWindow: View {
                     }
                 }
             }
+            .overlay(alignment: .top) {
+                // Permission prompts for the pages on screen, one at a time.
+                let visible = Set([tab.id] + (store.split(containing: tab.id)?.tabIDs ?? []))
+                if let request = pool.permissionRequests.first(where: { visible.contains($0.tabID) }) {
+                    PermissionPromptCard(request: request)
+                        .padding(.top, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .id(request.id)
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: pool.permissionRequests.map(\.id))
             .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
             .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
             .animation(.snappy(duration: 0.2), value: pageDropZone)
@@ -240,40 +255,77 @@ private struct PageDropHandler: DropDelegate {
 }
 
 /// Shows or hides the window's traffic lights.
-/// Shows or hides the window's traffic lights, and shifts them right and down by `offset`
-/// (used to keep them inside the peeking sidebar's card).
+/// Shows or hides the window's traffic lights.
 private struct WindowButtons: NSViewRepresentable {
     let isVisible: Bool
-    var offset: CGFloat = 0
-
-    final class Coordinator {
-        /// Each button's resting origin while it's shifted.
-        var origins: [NSWindow.ButtonType: NSPoint] = [:]
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView { NSView() }
 
     func updateNSView(_ view: NSView, context: Context) {
-        let isVisible = isVisible, offset = offset, coordinator = context.coordinator
+        let isVisible = isVisible
         DispatchQueue.main.async {
-            NSAnimationContext.runAnimationGroup { animation in
-                animation.duration = 0.16
-                for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-                    guard let button = view.window?.standardWindowButton(kind) else { continue }
-                    button.isHidden = !isVisible
-                    // Only touch the frame while shifted or coming back, so AppKit's own layout
-                    // (window resizing, full screen) isn't overridden with a stale position.
-                    guard offset != 0 || coordinator.origins[kind] != nil else { continue }
-                    let origin = coordinator.origins[kind] ?? button.frame.origin
-                    // The title bar isn't flipped, so moving down lowers y.
-                    let flipped = button.superview?.isFlipped ?? false
-                    button.animator().setFrameOrigin(NSPoint(x: origin.x + offset, y: origin.y + (flipped ? offset : -offset)))
-                    coordinator.origins[kind] = offset == 0 ? nil : origin
-                }
+            for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                view.window?.standardWindowButton(kind)?.isHidden = !isVisible
             }
         }
+    }
+}
+
+/// Traffic lights drawn inside the peeking sidebar's card, where the system ones can't go:
+/// AppKit lays its buttons out again on resizes, focus changes and title bar updates, so moving
+/// them doesn't stick (and they come apart). These match the system ones: 14pt, 23pt apart,
+/// symbols on hover, grey when the window isn't active, and the same actions.
+private struct CardTrafficLights: View {
+    @Environment(\.controlActiveState) private var activeState
+    @State private var window: NSWindow?
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 9) {
+            light(Color(red: 1, green: 0.37, blue: 0.34), symbol: "xmark", help: "Close") { window?.performClose(nil) }
+            light(Color(red: 1, green: 0.74, blue: 0.18), symbol: "minus", help: "Minimize") { window?.miniaturize(nil) }
+            light(Color(red: 0.16, green: 0.78, blue: 0.25), symbol: "arrow.up.left.and.arrow.down.right", help: "Enter Full Screen") {
+                window?.toggleFullScreen(nil)
+            }
+        }
+        .onHover { hovering = $0 }
+        .background(WindowReader(window: $window))
+    }
+
+    private func light(_ color: Color, symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        let active = activeState != .inactive || hovering
+        return Button(action: action) {
+            Circle()
+                .fill(active ? AnyShapeStyle(color.gradient) : AnyShapeStyle(Color.secondary.opacity(0.35)))
+                .overlay(Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5))
+                .overlay {
+                    if hovering {
+                        Image(systemName: symbol)
+                            .font(.system(size: symbol.count > 6 ? 6.5 : 8, weight: .bold))
+                            .foregroundStyle(.black.opacity(0.55))
+                    }
+                }
+                .frame(width: 14, height: 14)
+        }
+        .buttonStyle(PressDarkens())
+        .help(help)
+    }
+
+    private struct PressDarkens: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.brightness(configuration.isPressed ? -0.15 : 0)
+        }
+    }
+}
+
+/// Reports the window a view is in.
+private struct WindowReader: NSViewRepresentable {
+    @Binding var window: NSWindow?
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { if window !== view.window { window = view.window } }
     }
 }
 

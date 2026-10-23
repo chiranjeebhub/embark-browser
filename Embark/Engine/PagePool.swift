@@ -13,6 +13,10 @@ final class PagePool: BrowserPageDelegate {
     @ObservationIgnored private var suspendedDropTypes: [(NSView, [NSPasteboard.PasteboardType])] = []
     /// Bumped when navigation state changes so toolbar buttons refresh.
     private(set) var revision = 0
+    /// Permission prompts waiting for an answer, oldest first.
+    private(set) var permissionRequests: [TabPermissionRequest] = []
+    /// Permissions each site asked for this session, so page info can list them.
+    private(set) var usedPermissions: [String: Set<SitePermission>] = [:]
 
     init(engine: BrowserEngine = Engines.make()) {
         self.engine = engine
@@ -75,4 +79,35 @@ final class PagePool: BrowserPageDelegate {
     func page(_ page: BrowserPage, requestsNewTab url: URL) {
         store?.openTab(url)
     }
+
+    func page(_ page: BrowserPage, requestsPermission request: PermissionRequest) {
+        guard let id = tabIDs[ObjectIdentifier(page)] else { request.respond(false); return }
+        permissionRequests.append(TabPermissionRequest(tabID: id, request: request))
+        usedPermissions[request.host, default: []].formUnion(request.permissions)
+    }
+
+    func page(_ page: BrowserPage, dismissedPermissionRequest id: UInt64) {
+        permissionRequests.removeAll { $0.request.id == id }
+    }
+
+    /// Answers a prompt shown for `request`.
+    func answer(_ request: TabPermissionRequest, allow: Bool) {
+        permissionRequests.removeAll { $0.id == request.id }
+        request.request.respond(allow)
+    }
+
+    /// Mutes or unmutes every open page of a site, after its sound setting changes.
+    func setSiteMuted(_ muted: Bool, host: String) {
+        guard let store else { return }
+        for tab in store.spaces.flatMap(\.tabs) where tab.url.host() == host {
+            pages[tab.id]?.setAudioMuted(muted)
+        }
+    }
+}
+
+/// A permission prompt and the tab it came from.
+struct TabPermissionRequest: Identifiable {
+    let tabID: BrowserTab.ID
+    let request: PermissionRequest
+    var id: UInt64 { request.id }
 }
