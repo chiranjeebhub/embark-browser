@@ -29,6 +29,22 @@ That builds the `Embark` scheme, which uses WebKit and needs no downloads. To bu
 Chromium, run `scripts/fetch-cef.sh` first, then build the `EmbarkChromium` scheme. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#chromium-via-cef).
 
+### Running the Chromium build day to day
+
+Xcode signs local builds ad hoc, so every rebuild looks like a new app to macOS and it asks
+again for the keychain item that encrypts cookies and saved passwords ("Embark Safe Storage").
+To keep the same identity across rebuilds, sign the built app with a local self-signed
+identity before running or installing it:
+
+```sh
+scripts/sign-local.sh path/to/Embark.app
+```
+
+The first run creates an "Embark Local Dev" identity in its own keychain under
+`~/Library/Application Support/Embark/Signing` (not your login keychain). Click
+"Always Allow" once after that; later rebuilds signed the same way are remembered. CI
+doesn't sign and isn't affected.
+
 ## Shortcuts
 
 | Action | Shortcut |
@@ -38,7 +54,7 @@ Chromium, run `scripts/fetch-cef.sh` first, then build the `EmbarkChromium` sche
 | Back / forward / reload | ⌘[ / ⌘] / ⌘R |
 | Add to favorites | ⌘D |
 | Split view | ⌘⇧= |
-| Toggle sidebar | ⌘S |
+| Toggle sidebar | ⌘B or ⌘S |
 | Next / previous space | ⌘⌥→ / ⌘⌥← |
 | Jump to space 1 to 9 | ⌃1 … ⌃9 |
 
