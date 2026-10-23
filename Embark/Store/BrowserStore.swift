@@ -8,6 +8,9 @@ final class BrowserStore {
     var spaces: [Space] = [] { didSet { save() } }
     var selectedSpaceID: Space.ID? { didSet { save() } }
     var isCommandBarOpen = false
+    /// How far a two-finger swipe has moved the sidebar, as a fraction of its width:
+    /// positive reveals the previous space, negative the next one.
+    var swipeProgress: CGFloat = 0
     var isSidebarVisible = true
     /// The next tab opened from the command bar joins this tab in a split (New Split).
     var pendingSplitTabID: BrowserTab.ID?
@@ -53,6 +56,13 @@ final class BrowserStore {
     }
 
     func selectSpace(_ id: Space.ID) { selectedSpaceID = id }
+
+    /// The space a swipe at `progress` reveals, if there is one (swipes don't wrap around).
+    func neighborSpace(towardProgress progress: CGFloat) -> Space? {
+        guard progress != 0, let i = spaces.firstIndex(where: { $0.id == selectedSpaceID }) else { return nil }
+        let j = progress > 0 ? i - 1 : i + 1
+        return spaces.indices.contains(j) ? spaces[j] : nil
+    }
 
     func selectSpace(offset: Int) {
         guard let current = spaces.firstIndex(where: { $0.id == selectedSpaceID }), !spaces.isEmpty else { return }
