@@ -3,6 +3,8 @@ import SwiftUI
 struct Sidebar: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
+    @State private var swipe = SpaceSwipeTracker()
+    @State private var width: CGFloat = 264
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -11,13 +13,7 @@ struct Sidebar: View {
                 if store.isCreatingSpace {
                     CreateSpaceForm()
                 } else if let space = store.selectedSpace {
-                    VStack(alignment: .leading, spacing: 14) {
-                        AddressPill()
-                        FavoritesGrid(favorites: space.favorites)
-                        Divider().padding(.horizontal, 8)
-                        TabList(space: space)
-                    }
-                    .padding(.top, 5)
+                    swipeableContent(space)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -28,9 +24,53 @@ struct Sidebar: View {
         .padding(.horizontal, Self.margin)
         .padding(.bottom, 6)
         .animation(.snappy(duration: 0.22), value: store.isCreatingSpace)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            swipe.frame = frame
+            width = frame.width
+        }
+        .onAppear {
+            swipe.store = store
+            swipe.start()
+        }
+        .onDisappear { swipe.stop() }
+    }
+
+    /// The space's content, and during a swipe the neighbor's beside it, both following the
+    /// fingers. The neighbor is only built while a swipe shows it.
+    private func swipeableContent(_ space: Space) -> some View {
+        let progress = store.swipeProgress
+        let neighbor = store.neighborSpace(towardProgress: progress)
+        return ZStack(alignment: .topLeading) {
+            SpaceContent(space: space)
+                .offset(x: progress * width)
+            if let neighbor {
+                SpaceContent(space: neighbor)
+                    .offset(x: (progress > 0 ? progress - 1 : progress + 1) * width)
+                    .id(neighbor.id)
+            }
+        }
+        // Clip at the sidebar's edges, not at its margins.
+        .padding(.horizontal, Self.margin)
+        .clipped()
+        .padding(.horizontal, -Self.margin)
     }
 
     static let margin: CGFloat = 10
+}
+
+/// One space's address bar, favorites and tabs.
+private struct SpaceContent: View {
+    let space: Space
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            AddressPill(tab: space.tabs.first { $0.id == space.selectedTabID })
+            FavoritesGrid(favorites: space.favorites)
+            Divider().padding(.horizontal, 8)
+            TabList(space: space)
+        }
+        .padding(.top, 5)
+    }
 }
 
 extension Animation {
@@ -99,13 +139,15 @@ private struct NavigationRow: View {
 
 /// The current page's address, flat like Arc's: host only, with copy and page actions.
 private struct AddressPill: View {
+    /// The space's selected tab.
+    let tab: BrowserTab?
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
     @Environment(\.colorScheme) private var colorScheme
     @State private var justCopied = false
 
     var body: some View {
-        let url = store.selectedTab?.url
+        let url = tab?.url
         HStack(spacing: 6) {
             HStack(spacing: 7) {
                 if let url {
@@ -132,7 +174,7 @@ private struct AddressPill: View {
                 }
                 Menu {
                     Button("Copy URL") { copy(url) }
-                    Button("Reload") { pool.existingPage(for: store.selectedTab?.id)?.reload() }
+                    Button("Reload") { pool.existingPage(for: tab?.id)?.reload() }
                 } label: {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 13))
                 }
@@ -647,8 +689,13 @@ private struct BottomBar: View {
                 .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
             Spacer(minLength: 8)
             HStack(spacing: 16) {
+                // The active marker moves across during a swipe.
+                let progress = store.swipeProgress
+                let neighbor = store.neighborSpace(towardProgress: progress)?.id
                 ForEach(store.spaces) { space in
-                    SpaceGlyph(space: space, isActive: space.id == store.selectedSpaceID)
+                    SpaceGlyph(space: space,
+                               activeAmount: space.id == store.selectedSpaceID ? 1 - abs(progress)
+                                   : space.id == neighbor ? abs(progress) : 0)
                 }
             }
             Spacer(minLength: 8)
@@ -666,21 +713,18 @@ private struct BottomBar: View {
 /// A space as a plain glyph: its symbol, or its first letter. The active one is tinted.
 private struct SpaceGlyph: View {
     let space: Space
-    let isActive: Bool
+    /// 1 for the active space; between 0 and 1 while a swipe moves to or from it.
+    let activeAmount: CGFloat
     @Environment(BrowserStore.self) private var store
     @State private var hovering = false
 
     var body: some View {
         Button { store.selectSpace(space.id) } label: {
-            Group {
-                if let icon = space.icon {
-                    Image(systemName: icon)
-                } else {
-                    Text(space.name.prefix(1).uppercased()).fontWeight(.bold)
-                }
+            ZStack {
+                glyph.foregroundStyle(.primary.opacity(hovering ? 0.7 : 0.35)).opacity(1 - activeAmount)
+                glyph.foregroundStyle(space.tint.color).opacity(activeAmount)
             }
             .font(.system(size: 15))
-            .foregroundStyle(isActive ? AnyShapeStyle(space.tint.color) : AnyShapeStyle(.primary.opacity(hovering ? 0.7 : 0.35)))
             .frame(width: 22, height: 24)
             .contentShape(.rect)
         }
@@ -697,6 +741,14 @@ private struct SpaceGlyph: View {
             }
         }
         .animation(.snappy(duration: 0.15), value: hovering)
+    }
+
+    @ViewBuilder private var glyph: some View {
+        if let icon = space.icon {
+            Image(systemName: icon)
+        } else {
+            Text(space.name.prefix(1).uppercased()).fontWeight(.bold)
+        }
     }
 }
 

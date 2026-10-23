@@ -17,8 +17,13 @@ struct BrowserWindow: View {
     static let peekInset: CGFloat = 8
 
     var body: some View {
-        // The Create a Space form previews its tint on the whole window.
-        let tint = (store.draftTint ?? store.selectedSpace?.tint)?.color ?? .gray
+        // The Create a Space form previews its tint on the whole window; a swipe between
+        // spaces blends toward the next space's tint as it goes.
+        let spaceTint = store.selectedSpace?.tint.color ?? .gray
+        let swipeTint = store.neighborSpace(towardProgress: store.swipeProgress).map {
+            spaceTint.mix(with: $0.tint.color, by: Double(abs(store.swipeProgress)))
+        }
+        let tint = store.draftTint?.color ?? swipeTint ?? spaceTint
         HStack(spacing: 0) {
             if store.isSidebarVisible {
                 Sidebar()
