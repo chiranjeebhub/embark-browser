@@ -112,12 +112,17 @@ final class BrowserStore {
 
     // MARK: Spaces
 
-    func addSpace(name: String, tint: SpaceTint) {
+    func addSpace(name: String, tint: SpaceTint, icon: String?) {
         let profile = Profile(name: name)
         profiles.append(profile)
-        let space = Space(name: name, tint: tint, profileID: profile.id)
+        let space = Space(name: name, tint: tint, icon: icon, profileID: profile.id)
         spaces.append(space)
         selectedSpaceID = space.id
+    }
+
+    func setIcon(_ icon: String?, for id: Space.ID) {
+        guard let i = spaces.firstIndex(where: { $0.id == id }) else { return }
+        spaces[i].icon = icon
     }
 
     // MARK: Persistence
@@ -157,13 +162,13 @@ final class BrowserStore {
         profiles = [personal, work]
         func fav(_ title: String, _ url: String) -> Favorite { Favorite(title: title, url: URL(string: url)!) }
         spaces = [
-            Space(name: "Personal", tint: .purple, profileID: personal.id, favorites: [
+            Space(name: "Personal", tint: .purple, icon: "house.fill", profileID: personal.id, favorites: [
                 fav("Gmail", "https://mail.google.com"),
                 fav("YouTube", "https://www.youtube.com"),
                 fav("WhatsApp", "https://web.whatsapp.com"),
                 fav("Maps", "https://maps.google.com"),
             ]),
-            Space(name: "Work", tint: .blue, profileID: work.id, favorites: [
+            Space(name: "Work", tint: .blue, icon: "briefcase.fill", profileID: work.id, favorites: [
                 fav("Gmail", "https://mail.google.com"),
                 fav("Calendar", "https://calendar.google.com"),
                 fav("Slack", "https://app.slack.com"),

@@ -185,11 +185,7 @@ private struct SpaceSwitcher: View {
                         let active = space.id == store.selectedSpaceID
                         Button { store.selectSpace(space.id) } label: {
                             HStack(spacing: 7) {
-                                Text(space.name.prefix(1))
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 24, height: 24)
-                                    .background(space.tint.color, in: .circle)
+                                SpaceBadge(name: space.name, icon: space.icon, tint: space.tint, size: 24)
                                 if active {
                                     Text(space.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                                 }
@@ -209,6 +205,15 @@ private struct SpaceSwitcher: View {
                             }
                         }
                         .help("\(space.name) space, own profile")
+                        .contextMenu {
+                            Menu("Icon") {
+                                Button("First Letter") { store.setIcon(nil, for: space.id) }
+                                Divider()
+                                ForEach(SpaceIcon.choices, id: \.self) { symbol in
+                                    Button { store.setIcon(symbol, for: space.id) } label: { Image(systemName: symbol) }
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(4)
@@ -229,13 +234,27 @@ private struct NewSpaceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var tint = SpaceTint.teal
+    @State private var icon: String? = SpaceIcon.choices[0]
 
     var body: some View {
         Form {
+            HStack {
+                Spacer()
+                SpaceBadge(name: name.isEmpty ? "N" : name, icon: icon, tint: tint, size: 44)
+                Spacer()
+            }
             TextField("Name", text: $name, prompt: Text("Side project"))
             Picker("Color", selection: $tint) {
                 ForEach(SpaceTint.allCases, id: \.self) { tint in
                     Label(tint.rawValue.capitalized, systemImage: "circle.fill").foregroundStyle(tint.color).tag(tint)
+                }
+            }
+            LabeledContent("Icon") {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 4), count: 8), spacing: 4) {
+                    IconChoice(symbol: nil, label: String(name.prefix(1)).uppercased(), selection: $icon, tint: tint)
+                    ForEach(SpaceIcon.choices, id: \.self) { symbol in
+                        IconChoice(symbol: symbol, label: nil, selection: $icon, tint: tint)
+                    }
                 }
             }
             Text("A new space gets its own profile, so you can sign in to a different account.")
@@ -246,10 +265,54 @@ private struct NewSpaceSheet: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Create") { store.addSpace(name: name.isEmpty ? "New Space" : name, tint: tint); dismiss() }
+                Button("Create") { store.addSpace(name: name.isEmpty ? "New Space" : name, tint: tint, icon: icon); dismiss() }
                     .buttonStyle(.glassProminent)
             }
         }
+    }
+}
+
+/// The round tinted mark for a space: its icon, or the first letter of its name.
+struct SpaceBadge: View {
+    let name: String
+    let icon: String?
+    let tint: SpaceTint
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let icon {
+                Image(systemName: icon).font(.system(size: size * 0.46, weight: .semibold))
+            } else {
+                Text(name.prefix(1).uppercased()).font(.system(size: size * 0.46, weight: .bold))
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(width: size, height: size)
+        .background(tint.color.gradient, in: .circle)
+    }
+}
+
+private struct IconChoice: View {
+    let symbol: String?
+    let label: String?
+    @Binding var selection: String?
+    let tint: SpaceTint
+
+    var body: some View {
+        let selected = selection == symbol
+        Button { selection = symbol } label: {
+            Group {
+                if let symbol { Image(systemName: symbol) } else { Text(label?.isEmpty == false ? label! : "A").fontWeight(.bold) }
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(selected ? .white : .secondary)
+            .frame(width: 26, height: 26)
+            .background(selected ? AnyShapeStyle(tint.color) : AnyShapeStyle(.quaternary.opacity(0.5)), in: .rect(cornerRadius: 7))
+            .contentShape(.rect(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help(symbol ?? "First letter of the name")
     }
 }
 
