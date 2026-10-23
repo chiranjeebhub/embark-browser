@@ -103,6 +103,8 @@ private struct AddressPill: View {
     @Environment(PagePool.self) private var pool
     @Environment(\.colorScheme) private var colorScheme
     @State private var justCopied = false
+    @State private var showsPageInfo = false
+    @State private var showsSiteSettings = false
 
     var body: some View {
         let url = store.selectedTab?.url
@@ -130,16 +132,19 @@ private struct AddressPill: View {
                     Button { copy(url) } label: { Image(systemName: "link").font(.system(size: 13)) }
                         .help("Copy URL")
                 }
-                Menu {
-                    Button("Copy URL") { copy(url) }
-                    Button("Reload") { pool.existingPage(for: store.selectedTab?.id)?.reload() }
-                } label: {
+                Button { showsPageInfo = true } label: {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 13))
                 }
-                .menuStyle(.button)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Page actions")
+                .help("Page info")
+                .popover(isPresented: $showsPageInfo, arrowEdge: .bottom) {
+                    if let tab = store.selectedTab {
+                        PageInfoPopover(tab: tab, isPresented: $showsPageInfo, showsSiteSettings: $showsSiteSettings)
+                            .id(tab.id)
+                    }
+                }
+                .sheet(isPresented: $showsSiteSettings) {
+                    if let tab = store.selectedTab { SiteSettingsSheet(tab: tab) }
+                }
             }
         }
         .buttonStyle(SidebarIconButtonStyle())

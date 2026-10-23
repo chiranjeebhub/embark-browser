@@ -19,12 +19,102 @@ protocol BrowserPage: AnyObject {
     func reload()
     /// Releases the renderer. The page is discarded afterwards.
     func close()
+
+    // Page info. Engines without these keep the defaults below.
+    var security: PageSecurity { get }
+    /// A permission for the current page's site, kept by the page's profile.
+    func permission(_ permission: SitePermission) -> PermissionValue
+    /// What the profile uses for sites without their own setting.
+    func defaultPermission(_ permission: SitePermission) -> PermissionValue
+    func setPermission(_ permission: SitePermission, to value: PermissionValue)
+    func setAudioMuted(_ muted: Bool)
+    func countCookies(_ completion: @escaping (Int) -> Void)
+    /// Deletes the site's cookies and storage.
+    func clearSiteData(_ completion: @escaping () -> Void)
+}
+
+extension BrowserPage {
+    var security: PageSecurity { PageSecurity(isSecure: false, hasCertificateError: false, certificate: nil) }
+    func permission(_ permission: SitePermission) -> PermissionValue { .default }
+    func defaultPermission(_ permission: SitePermission) -> PermissionValue { .default }
+    func setPermission(_ permission: SitePermission, to value: PermissionValue) {}
+    func setAudioMuted(_ muted: Bool) {}
+    func countCookies(_ completion: @escaping (Int) -> Void) { completion(0) }
+    func clearSiteData(_ completion: @escaping () -> Void) { completion() }
 }
 
 @MainActor
 protocol BrowserPageDelegate: AnyObject {
     func page(_ page: BrowserPage, didChangeTitle title: String?, url: URL?)
     func page(_ page: BrowserPage, requestsNewTab url: URL)
+    func page(_ page: BrowserPage, requestsPermission request: PermissionRequest)
+    func page(_ page: BrowserPage, dismissedPermissionRequest id: UInt64)
+}
+
+/// Per-site permissions shown in page info. Raw values match EMBSitePermission.
+enum SitePermission: Int, CaseIterable, Identifiable {
+    case camera, microphone, notifications, sound, autoPictureInPicture
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .camera: "Camera"
+        case .microphone: "Microphone"
+        case .notifications: "Notifications"
+        case .sound: "Sound"
+        case .autoPictureInPicture: "Automatic picture-in-picture"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .camera: "video"
+        case .microphone: "mic"
+        case .notifications: "bell"
+        case .sound: "speaker.wave.2"
+        case .autoPictureInPicture: "pip"
+        }
+    }
+
+    /// Prompt wording: "wants to use your camera".
+    var ask: String {
+        switch self {
+        case .camera: "use your camera"
+        case .microphone: "use your microphone"
+        case .notifications: "show notifications"
+        case .sound: "play sound"
+        case .autoPictureInPicture: "use picture-in-picture"
+        }
+    }
+}
+
+/// A permission's setting for a site. Raw values match EMBPermissionValue.
+enum PermissionValue: Int {
+    case `default`, allow, block, ask
+}
+
+struct PageCertificate {
+    var subject: String
+    var issuer: String
+    var validFrom: Date
+    var validUntil: Date
+}
+
+struct PageSecurity {
+    var isSecure: Bool
+    var hasCertificateError: Bool
+    var certificate: PageCertificate?
+}
+
+/// A site asking for permissions, answered once through `respond`.
+struct PermissionRequest: Identifiable {
+    let id: UInt64
+    let origin: String
+    let permissions: [SitePermission]
+    let respond: (Bool) -> Void
+
+    var host: String { URL(string: origin)?.host() ?? origin }
 }
 
 enum Engines {

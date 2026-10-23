@@ -4,12 +4,20 @@
 #include "include/cef_application_mac.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_cookie.h"
+#include "include/cef_navigation_entry.h"
+#include "include/cef_permission_handler.h"
+#include "include/cef_ssl_info.h"
+#include "include/cef_ssl_status.h"
+#include "include/cef_x509_certificate.h"
 #include "include/cef_request_context.h"
 #include "include/wrapper/cef_library_loader.h"
 
+#include <algorithm>
 #include <map>
 #include <objc/runtime.h>
 #include <string>
+#include <vector>
 
 // MARK: - Application
 
@@ -119,26 +127,174 @@ private:
 
 // MARK: - Browser
 
+@implementation EMBCEFCertificate
+@end
+
 @interface EMBCEFBrowser ()
 - (void)handleTitle:(NSString *)title;
 - (void)handleURL:(NSString *)url;
 - (void)handlePopup:(NSString *)url;
 - (void)handleNavigationStateBack:(BOOL)back forward:(BOOL)forward;
 - (void)handleCreated:(CefRefPtr<CefBrowser>)browser;
+- (void)handlePermissionRequest:(NSArray<NSNumber *> *)permissions origin:(NSString *)origin
+                      requestID:(uint64_t)requestID respond:(void (^)(BOOL))respond;
+- (void)handlePermissionDismissed:(uint64_t)requestID;
 @end
 
 namespace {
 
+cef_content_setting_types_t ContentType(EMBSitePermission permission) {
+    switch (permission) {
+    case EMBSitePermissionCamera: return CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA;
+    case EMBSitePermissionMicrophone: return CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC;
+    case EMBSitePermissionNotifications: return CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS;
+    case EMBSitePermissionSound: return CEF_CONTENT_SETTING_TYPE_SOUND;
+    case EMBSitePermissionAutoPictureInPicture: return CEF_CONTENT_SETTING_TYPE_AUTO_PICTURE_IN_PICTURE;
+    }
+}
+
+cef_content_setting_values_t ContentValue(EMBPermissionValue value) {
+    switch (value) {
+    case EMBPermissionValueDefault: return CEF_CONTENT_SETTING_VALUE_DEFAULT;
+    case EMBPermissionValueAllow: return CEF_CONTENT_SETTING_VALUE_ALLOW;
+    case EMBPermissionValueBlock: return CEF_CONTENT_SETTING_VALUE_BLOCK;
+    case EMBPermissionValueAsk: return CEF_CONTENT_SETTING_VALUE_ASK;
+    }
+}
+
+EMBPermissionValue PermissionValue(cef_content_setting_values_t value) {
+    switch (value) {
+    case CEF_CONTENT_SETTING_VALUE_ALLOW: return EMBPermissionValueAllow;
+    case CEF_CONTENT_SETTING_VALUE_BLOCK: return EMBPermissionValueBlock;
+    case CEF_CONTENT_SETTING_VALUE_ASK: return EMBPermissionValueAsk;
+    default: return EMBPermissionValueDefault;
+    }
+}
+
+NSDate *DateFromBaseTime(const CefBaseTime &time) {
+    // CefBaseTime counts microseconds since 1601-01-01.
+    return [NSDate dateWithTimeIntervalSince1970:(double)time.val / 1e6 - 11644473600.0];
+}
+
+/// "accounts.google.com" -> "google.com", "news.bbc.co.uk" -> "bbc.co.uk". A heuristic in place
+/// of the public suffix list, used to find a site's cookies.
+std::string RegistrableDomain(const std::string &host) {
+    std::vector<std::string> labels;
+    size_t start = 0, dot;
+    while ((dot = host.find('.', start)) != std::string::npos) { labels.push_back(host.substr(start, dot - start)); start = dot + 1; }
+    labels.push_back(host.substr(start));
+    if (labels.size() <= 2) return host;
+    size_t keep = (labels.back().size() == 2 && labels[labels.size() - 2].size() <= 3) ? 3 : 2;
+    std::string domain;
+    for (size_t i = labels.size() - std::min(keep, labels.size()); i < labels.size(); ++i) domain += (domain.empty() ? "" : ".") + labels[i];
+    return domain;
+}
+
+/// Counts the cookies for a URL and reports the total once the visit is over.
+class CookieCounter : public CefCookieVisitor {
+public:
+    explicit CookieCounter(void (^completion)(NSInteger)) : completion_(completion) {}
+    ~CookieCounter() override {
+        auto completion = completion_;
+        NSInteger count = count_;
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(count); });
+    }
+    bool Visit(const CefCookie &, int, int total, bool &) override {
+        count_ = total;
+        return false;
+    }
+
+private:
+    void (^completion_)(NSInteger);
+    NSInteger count_ = 0;
+    IMPLEMENT_REFCOUNTING(CookieCounter);
+};
+
+/// Deletes every cookie whose domain is `site` or under it, then calls back.
+class CookieDeleter : public CefCookieVisitor {
+public:
+    CookieDeleter(std::string site, void (^completion)(void)) : site_(std::move(site)), completion_(completion) {}
+    ~CookieDeleter() override { dispatch_async(dispatch_get_main_queue(), completion_); }
+    bool Visit(const CefCookie &cookie, int, int, bool &deleteCookie) override {
+        std::string domain = CefString(&cookie.domain).ToString();
+        if (!domain.empty() && domain[0] == '.') domain.erase(0, 1);
+        deleteCookie = domain == site_ ||
+                       (domain.size() > site_.size() && domain.compare(domain.size() - site_.size() - 1, std::string::npos, "." + site_) == 0);
+        return true;
+    }
+
+private:
+    std::string site_;
+    void (^completion_)(void);
+    IMPLEMENT_REFCOUNTING(CookieDeleter);
+};
+
+/// Media requests get ids above this, so they never collide with Chromium's prompt ids.
+uint64_t gNextMediaRequestID = 1ull << 62;
+
 class EmbarkClient : public CefClient,
                      public CefDisplayHandler,
                      public CefLifeSpanHandler,
-                     public CefLoadHandler {
+                     public CefLoadHandler,
+                     public CefPermissionHandler {
 public:
     explicit EmbarkClient(EMBCEFBrowser *owner) : owner_(owner) {}
 
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+    CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+
+    // Camera and microphone: use the site's saved choice, otherwise ask with Embark's prompt
+    // and save the answer in the profile.
+    bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, const CefString &origin,
+                                        uint32_t requested, CefRefPtr<CefMediaAccessCallback> callback) override {
+        uint32_t device = requested & (CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE | CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE);
+        if (device == 0 || device != requested) return false;  // Screen capture keeps Chromium's handling.
+        std::vector<cef_content_setting_types_t> types;
+        NSMutableArray<NSNumber *> *permissions = [NSMutableArray array];
+        if (requested & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE) { types.push_back(CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA); [permissions addObject:@(EMBSitePermissionCamera)]; }
+        if (requested & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE) { types.push_back(CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC); [permissions addObject:@(EMBSitePermissionMicrophone)]; }
+        auto context = browser->GetHost()->GetRequestContext();
+        bool allAllowed = true, anyBlocked = false;
+        for (auto type : types) {
+            auto value = context->GetContentSetting(origin, origin, type);
+            allAllowed &= value == CEF_CONTENT_SETTING_VALUE_ALLOW;
+            anyBlocked |= value == CEF_CONTENT_SETTING_VALUE_BLOCK;
+        }
+        if (allAllowed) { callback->Continue(requested); return true; }
+        if (anyBlocked || !owner_) { callback->Continue(CEF_MEDIA_PERMISSION_NONE); return true; }
+        CefString savedOrigin = origin;
+        [owner_ handlePermissionRequest:permissions origin:@(origin.ToString().c_str()) requestID:gNextMediaRequestID++
+                                respond:^(BOOL allow) {
+            for (auto type : types) {
+                context->SetContentSetting(savedOrigin, savedOrigin, type,
+                                           allow ? CEF_CONTENT_SETTING_VALUE_ALLOW : CEF_CONTENT_SETTING_VALUE_BLOCK);
+            }
+            callback->Continue(allow ? requested : CEF_MEDIA_PERMISSION_NONE);
+        }];
+        return true;
+    }
+
+    // Other prompts (notifications, and camera/mic through the Permissions API): Embark's
+    // prompt instead of Chrome's bubble, which has no window to show in here. Chromium saves
+    // the answer.
+    bool OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promptID, const CefString &origin, uint32_t requested,
+                                CefRefPtr<CefPermissionPromptCallback> callback) override {
+        NSMutableArray<NSNumber *> *permissions = [NSMutableArray array];
+        if (requested & CEF_PERMISSION_TYPE_CAMERA_STREAM) [permissions addObject:@(EMBSitePermissionCamera)];
+        if (requested & CEF_PERMISSION_TYPE_MIC_STREAM) [permissions addObject:@(EMBSitePermissionMicrophone)];
+        if (requested & CEF_PERMISSION_TYPE_NOTIFICATIONS) [permissions addObject:@(EMBSitePermissionNotifications)];
+        if (permissions.count == 0 || !owner_) return false;
+        [owner_ handlePermissionRequest:permissions origin:@(origin.ToString().c_str()) requestID:promptID respond:^(BOOL allow) {
+            callback->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY);
+        }];
+        return true;
+    }
+
+    void OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promptID, cef_permission_request_result_t) override {
+        [owner_ handlePermissionDismissed:promptID];
+    }
 
     void OnTitleChange(CefRefPtr<CefBrowser>, const CefString &title) override {
         [owner_ handleTitle:@(title.ToString().c_str())];
@@ -255,8 +411,94 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
     }
 }
 
+- (CefRefPtr<CefSSLStatus>)sslStatus {
+    if (!_browser) return nullptr;
+    auto entry = _browser->GetHost()->GetVisibleNavigationEntry();
+    return entry ? entry->GetSSLStatus() : nullptr;
+}
+
+- (BOOL)isSecure {
+    auto status = [self sslStatus];
+    return status && status->IsSecureConnection() && !CefIsCertStatusError(status->GetCertStatus());
+}
+
+- (BOOL)hasCertificateError {
+    auto status = [self sslStatus];
+    return status && CefIsCertStatusError(status->GetCertStatus());
+}
+
+- (EMBCEFCertificate *)certificate {
+    auto status = [self sslStatus];
+    auto certificate = status ? status->GetX509Certificate() : nullptr;
+    if (!certificate) return nil;
+    EMBCEFCertificate *info = [EMBCEFCertificate new];
+    info.subject = @(certificate->GetSubject()->GetDisplayName().ToString().c_str());
+    info.issuer = @(certificate->GetIssuer()->GetDisplayName().ToString().c_str());
+    info.validFrom = DateFromBaseTime(certificate->GetValidStart());
+    info.validUntil = DateFromBaseTime(certificate->GetValidExpiry());
+    return info;
+}
+
+- (CefString)pageURL {
+    return _browser ? _browser->GetMainFrame()->GetURL() : CefString();
+}
+
+- (EMBPermissionValue)permission:(EMBSitePermission)permission {
+    if (!_browser) return EMBPermissionValueDefault;
+    CefString url = [self pageURL];
+    return PermissionValue(_browser->GetHost()->GetRequestContext()->GetContentSetting(url, url, ContentType(permission)));
+}
+
+- (EMBPermissionValue)defaultPermission:(EMBSitePermission)permission {
+    if (!_browser) return EMBPermissionValueDefault;
+    return PermissionValue(_browser->GetHost()->GetRequestContext()->GetContentSetting(CefString(), CefString(), ContentType(permission)));
+}
+
+- (void)setPermission:(EMBSitePermission)permission value:(EMBPermissionValue)value {
+    if (!_browser) return;
+    CefString url = [self pageURL];
+    _browser->GetHost()->GetRequestContext()->SetContentSetting(url, url, ContentType(permission), ContentValue(value));
+    if (permission == EMBSitePermissionSound) [self setAudioMuted:value == EMBPermissionValueBlock];
+}
+
+- (void)setAudioMuted:(BOOL)muted {
+    if (_browser) _browser->GetHost()->SetAudioMuted(muted);
+}
+
+- (void)countCookies:(void (^)(NSInteger))completion {
+    auto manager = _browser ? _browser->GetHost()->GetRequestContext()->GetCookieManager(nullptr) : nullptr;
+    if (!manager || !manager->VisitUrlCookies([self pageURL], true, new CookieCounter(completion))) completion(0);
+}
+
+- (void)clearSiteData:(void (^)(void))completion {
+    if (!_browser) { completion(); return; }
+    NSURL *url = [NSURL URLWithString:@([self pageURL].ToString().c_str())];
+    if (!url.host) { completion(); return; }
+    // Local storage, IndexedDB, cache and the like for this origin.
+    auto params = CefDictionaryValue::Create();
+    params->SetString("origin", [NSString stringWithFormat:@"%@://%@", url.scheme, url.host].UTF8String);
+    params->SetString("storageTypes", "all");
+    _browser->GetHost()->ExecuteDevToolsMethod(0, "Storage.clearDataForOrigin", params);
+    // Cookies for the whole site, so subdomain logins go too.
+    auto manager = _browser->GetHost()->GetRequestContext()->GetCookieManager(nullptr);
+    if (!manager || !manager->VisitAllCookies(new CookieDeleter(RegistrableDomain(url.host.UTF8String), completion))) completion();
+}
+
+- (void)handlePermissionRequest:(NSArray<NSNumber *> *)permissions origin:(NSString *)origin
+                      requestID:(uint64_t)requestID respond:(void (^)(BOOL))respond {
+    [self.delegate cefBrowser:self requestsPermissions:permissions origin:origin requestID:requestID respond:respond];
+}
+
+- (void)handlePermissionDismissed:(uint64_t)requestID {
+    [self.delegate cefBrowser:self dismissedPermissionRequest:requestID];
+}
+
 - (void)handleTitle:(NSString *)title { [self.delegate cefBrowser:self didChangeTitle:title]; }
-- (void)handleURL:(NSString *)url { [self.delegate cefBrowser:self didChangeURL:[NSURL URLWithString:url]]; }
+- (void)handleURL:(NSString *)url {
+    // Sites whose sound is turned off in page info stay muted.
+    [self setAudioMuted:[self permission:EMBSitePermissionSound] == EMBPermissionValueBlock];
+    [self.delegate cefBrowser:self didChangeURL:[NSURL URLWithString:url]];
+}
 
 - (void)handlePopup:(NSString *)url {
     NSURL *target = [NSURL URLWithString:url];
