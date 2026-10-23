@@ -56,14 +56,18 @@ struct BrowserWindow: View {
     /// A strip along the left edge; hovering it floats the sidebar over the page, which stays put.
     @ViewBuilder private func peekingSidebar(tint: Color) -> some View {
         if isPeeking {
+            // The same sidebar at the same spot as when pinned, so the toolbar row stays level
+            // with the traffic lights and nothing shifts; only the panel behind it is inset.
             Sidebar()
-                // Keeps the toolbar row level with the traffic lights despite the inset.
-                .padding(.top, -6)
                 .frame(width: 264)
                 .frame(maxHeight: .infinity)
-                .glassEffect(.regular.tint(tint.opacity(0.25)), in: .rect(cornerRadius: 12))
-                .shadow(color: .black.opacity(0.3), radius: 20, x: 4)
-                .padding([.top, .bottom, .leading], 6)
+                .background {
+                    // 11pt is concentric with the ~17pt window corner at a 6pt inset.
+                    Color.clear
+                        .glassEffect(.regular.tint(tint.opacity(0.25)), in: .rect(cornerRadius: 11))
+                        .shadow(color: .black.opacity(0.25), radius: 16, x: 2, y: 4)
+                        .padding([.top, .bottom, .leading], 6)
+                }
                 .onHover(perform: peek)
                 .transition(.move(edge: .leading).combined(with: .opacity))
         } else {
