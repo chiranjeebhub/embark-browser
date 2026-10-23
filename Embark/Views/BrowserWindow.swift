@@ -11,6 +11,9 @@ struct BrowserWindow: View {
     @State private var hidePeek: Task<Void, Never>?
     @State private var sidebarShortcut: Any?
 
+    /// How far the peeking sidebar's card sits from the window's top, left and bottom edges.
+    static let peekInset: CGFloat = 8
+
     var body: some View {
         // The Create a Space form previews its tint on the whole window.
         let tint = (store.draftTint ?? store.selectedSpace?.tint)?.color ?? .gray
@@ -37,7 +40,8 @@ struct BrowserWindow: View {
             if !store.isSidebarVisible { peekingSidebar(tint: tint) }
         }
         .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false }
-        .background(WindowButtons(isVisible: store.isSidebarVisible || isPeeking))
+        .background(WindowButtons(isVisible: store.isSidebarVisible || isPeeking,
+                                  offset: isPeeking && !store.isSidebarVisible ? Self.peekInset : 0))
         .background {
             ZStack {
                 Rectangle().fill(.background)
@@ -57,18 +61,20 @@ struct BrowserWindow: View {
     /// A strip along the left edge; hovering it floats the sidebar over the page, which stays put.
     @ViewBuilder private func peekingSidebar(tint: Color) -> some View {
         if isPeeking {
-            // The same sidebar at the same spot as when pinned, so the toolbar row stays level
-            // with the traffic lights and nothing shifts; only the panel behind it is inset.
+            // A card inset from the window. The sidebar inside keeps its usual margins and width,
+            // so everything sits as far from the card's edges as it does from the window's when
+            // pinned; the traffic lights move by the same inset (see WindowButtons).
             Sidebar()
+                .padding(.bottom, 4)
                 .frame(width: 264)
                 .frame(maxHeight: .infinity)
                 .background {
-                    // 11pt is concentric with the ~17pt window corner at a 6pt inset.
+                    // Concentric with the ~17pt window corner at this inset.
                     Color.clear
-                        .glassEffect(.regular.tint(tint.opacity(0.25)), in: .rect(cornerRadius: 11))
+                        .glassEffect(.regular.tint(tint.opacity(0.25)), in: .rect(cornerRadius: 17 - Self.peekInset))
                         .shadow(color: .black.opacity(0.25), radius: 16, x: 2, y: 4)
-                        .padding([.top, .bottom, .leading], 6)
                 }
+                .padding([.top, .bottom, .leading], Self.peekInset)
                 .onHover(perform: peek)
                 .transition(.move(edge: .leading).combined(with: .opacity))
         } else {
@@ -149,16 +155,38 @@ struct PageHost: NSViewRepresentable {
 }
 
 /// Shows or hides the window's traffic lights.
+/// Shows or hides the window's traffic lights, and shifts them right and down by `offset`
+/// (used to keep them inside the peeking sidebar's card).
 private struct WindowButtons: NSViewRepresentable {
     let isVisible: Bool
+    var offset: CGFloat = 0
+
+    final class Coordinator {
+        /// Each button's resting origin while it's shifted.
+        var origins: [NSWindow.ButtonType: NSPoint] = [:]
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView { NSView() }
 
     func updateNSView(_ view: NSView, context: Context) {
-        let isVisible = isVisible
+        let isVisible = isVisible, offset = offset, coordinator = context.coordinator
         DispatchQueue.main.async {
-            for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-                view.window?.standardWindowButton(kind)?.isHidden = !isVisible
+            NSAnimationContext.runAnimationGroup { animation in
+                animation.duration = 0.16
+                for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                    guard let button = view.window?.standardWindowButton(kind) else { continue }
+                    button.isHidden = !isVisible
+                    // Only touch the frame while shifted or coming back, so AppKit's own layout
+                    // (window resizing, full screen) isn't overridden with a stale position.
+                    guard offset != 0 || coordinator.origins[kind] != nil else { continue }
+                    let origin = coordinator.origins[kind] ?? button.frame.origin
+                    // The title bar isn't flipped, so moving down lowers y.
+                    let flipped = button.superview?.isFlipped ?? false
+                    button.animator().setFrameOrigin(NSPoint(x: origin.x + offset, y: origin.y + (flipped ? offset : -offset)))
+                    coordinator.origins[kind] = offset == 0 ? nil : origin
+                }
             }
         }
     }
