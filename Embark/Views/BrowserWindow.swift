@@ -10,6 +10,8 @@ struct BrowserWindow: View {
     @State private var isPeeking = false
     @State private var hidePeek: Task<Void, Never>?
     @State private var sidebarShortcut: Any?
+    /// Where a tab dragged over the page would land, for the split preview.
+    @State private var pageDropZone: PageDropZone?
 
     /// How far the peeking sidebar's card sits from the window's top, left and bottom edges.
     static let peekInset: CGFloat = 8
@@ -109,13 +111,29 @@ struct BrowserWindow: View {
 
     @ViewBuilder private var content: some View {
         if let space = store.selectedSpace, let profile = store.profile(for: space), let tab = store.selectedTab {
-            HStack(spacing: 8) {
-                PageHost(tab: tab, profile: profile)
-                if let splitID = store.splitTabID, let split = space.tabs.first(where: { $0.id == splitID }) {
-                    PageHost(tab: split, profile: profile)
-                        .clipShape(.rect(cornerRadius: 12))
+            Group {
+                if let split = store.split(containing: tab.id) {
+                    SplitPanes(split: split, space: space, profile: profile)
+                } else {
+                    PageHost(tab: tab, profile: profile)
                 }
             }
+            .overlay {
+                GeometryReader { geo in
+                    if let zone = pageDropZone {
+                        let rect = zone.rect(in: geo.size).insetBy(dx: 6, dy: 6)
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.accentColor.opacity(0.18))
+                            .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 2)
+                            .frame(width: rect.width, height: rect.height)
+                            .position(x: rect.midX, y: rect.midY)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
+            .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
+            .animation(.snappy(duration: 0.2), value: pageDropZone)
         } else {
             EmptySpaceView()
         }
@@ -124,7 +142,7 @@ struct BrowserWindow: View {
     private func sleepIdleTabs() async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(60))
-            let visible = Set([store.selectedTab?.id, store.splitTabID].compactMap { $0 })
+            let visible = Set([store.selectedTab?.id].compactMap { $0 } + (store.split(containing: store.selectedTab?.id)?.tabIDs ?? []))
             pool.sleepIdle(spaces: store.spaces, visible: visible, idle: 30 * 60)
         }
     }
@@ -135,16 +153,39 @@ struct BrowserWindow: View {
 struct PageHost: NSViewRepresentable {
     let tab: BrowserTab
     let profile: Profile
+    /// Called when the user clicks into the page. Web views swallow clicks, so this watches
+    /// the window's mouse-downs instead.
+    var onClick: (() -> Void)?
     @Environment(PagePool.self) private var pool
+
+    final class Coordinator {
+        var onClick: (() -> Void)?
+        var monitor: Any?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.white.cgColor
+        let coordinator = context.coordinator
+        coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak container] event in
+            if let container, event.window === container.window,
+               container.bounds.contains(container.convert(event.locationInWindow, from: nil)) {
+                coordinator.onClick?()
+            }
+            return event
+        }
         return container
     }
 
+    static func dismantleNSView(_ container: NSView, coordinator: Coordinator) {
+        coordinator.monitor.map(NSEvent.removeMonitor)
+    }
+
     func updateNSView(_ container: NSView, context: Context) {
+        context.coordinator.onClick = onClick
         let page = pool.page(for: tab, profile: profile)
         guard page.view.superview !== container else { return }
         container.subviews.forEach { $0.removeFromSuperview() }
@@ -152,6 +193,45 @@ struct PageHost: NSViewRepresentable {
         page.view.autoresizingMask = [.width, .height]
         container.addSubview(page.view)
     }
+}
+
+/// Drops a sidebar tab or favorite onto the page: it opens as a split pane on that side of the
+/// current page (or split).
+private struct PageDropHandler: DropDelegate {
+    let store: BrowserStore
+    @Binding var zone: PageDropZone?
+
+    func validateDrop(info: DropInfo) -> Bool { SidebarDrag.current?.canSplit == true }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        // The drop target is the whole page area, so its size comes from the zone math below.
+        zone = PageDropZone(location: info.location, in: PageDropHandler.pageSize)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) { zone = nil }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let zone, let target = store.selectedTab?.id else { return false }
+        let store = store, zoneBinding = $zone
+        return SidebarDrag.load(from: info) { drag in
+            zoneBinding.wrappedValue = nil
+            withAnimation(.snappy(duration: 0.2)) {
+                switch drag {
+                case .tab(let id): store.addToSplit(id, beside: target, before: zone.isBefore, isVertical: zone.isVertical)
+                case .favorite(let id):
+                    guard let favorite = store.selectedSpace?.favorites.first(where: { $0.id == id }) else { return }
+                    let tab = store.openTab(favorite.url, title: favorite.title)
+                    store.addToSplit(tab.id, beside: target, before: zone.isBefore, isVertical: zone.isVertical)
+                default: break
+                }
+            }
+            SidebarDrag.current = nil
+        }
+    }
+
+    /// Updated by the page area's size reader.
+    @MainActor static var pageSize = CGSize(width: 1, height: 1)
 }
 
 /// Shows or hides the window's traffic lights.

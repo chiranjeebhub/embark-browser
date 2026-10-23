@@ -34,6 +34,30 @@ struct Space: Identifiable, Codable, Hashable {
     var selectedTabID: BrowserTab.ID?
     /// Recently closed tabs, newest last, for the Library. Optional so older saved state loads.
     var recentlyClosed: [BrowserTab]?
+    /// Tabs shown side by side. Optional so older saved state loads.
+    var splits: [Split]?
+}
+
+/// Two to four tabs of a space shown side by side (or stacked) as one item in the tab list.
+/// The panes stay ordinary tabs; the space's selected tab is the active pane.
+struct Split: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var tabIDs: [BrowserTab.ID]
+    var isVertical = false
+    /// Each pane's share of the space, summing to 1.
+    var fractions: [Double]
+
+    static let maxPanes = 4
+
+    init(tabIDs: [BrowserTab.ID], isVertical: Bool = false) {
+        self.tabIDs = tabIDs
+        self.isVertical = isVertical
+        fractions = Array(repeating: 1 / Double(tabIDs.count), count: tabIDs.count)
+    }
+
+    mutating func evenOut() {
+        fractions = Array(repeating: 1 / Double(tabIDs.count), count: tabIDs.count)
+    }
 }
 
 enum SpaceIcon {

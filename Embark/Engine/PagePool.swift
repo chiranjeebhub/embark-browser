@@ -10,6 +10,7 @@ final class PagePool: BrowserPageDelegate {
     @ObservationIgnored private var pages: [BrowserTab.ID: BrowserPage] = [:]
     @ObservationIgnored private var tabIDs: [ObjectIdentifier: BrowserTab.ID] = [:]
     @ObservationIgnored weak var store: BrowserStore?
+    @ObservationIgnored private var suspendedDropTypes: [(NSView, [NSPasteboard.PasteboardType])] = []
     /// Bumped when navigation state changes so toolbar buttons refresh.
     private(set) var revision = 0
 
@@ -28,6 +29,25 @@ final class PagePool: BrowserPageDelegate {
 
     func existingPage(for id: BrowserTab.ID?) -> BrowserPage? {
         id.flatMap { pages[$0] }
+    }
+
+    /// Web views take drops themselves, which would hide the page area's own drop target while
+    /// a sidebar item is dragged onto it. They stop taking drops until the mouse is released.
+    func suspendPageDrops() {
+        guard suspendedDropTypes.isEmpty else { return }
+        func suspend(_ view: NSView) {
+            if !view.registeredDraggedTypes.isEmpty {
+                suspendedDropTypes.append((view, view.registeredDraggedTypes))
+                view.unregisterDraggedTypes()
+            }
+            view.subviews.forEach(suspend)
+        }
+        pages.values.forEach { suspend($0.view) }
+        Task {
+            while NSEvent.pressedMouseButtons != 0 { try? await Task.sleep(for: .milliseconds(200)) }
+            for (view, types) in suspendedDropTypes { view.registerForDraggedTypes(types) }
+            suspendedDropTypes = []
+        }
     }
 
     func close(_ id: BrowserTab.ID) {

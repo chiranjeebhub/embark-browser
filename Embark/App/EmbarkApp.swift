@@ -77,8 +77,12 @@ struct BrowserCommands: Commands {
             Divider()
             Button("Add to Favorites") { if let tab = store.selectedTab { store.addFavorite(from: tab) } }
                 .keyboardShortcut("d")
-            Button(store.splitTabID == nil ? "Split View" : "Close Split View") { store.toggleSplit() }
-                .keyboardShortcut("=", modifiers: [.command, .shift])
+            Button("New Split") { store.startNewSplit() }
+                .keyboardShortcut("=", modifiers: [.control, .shift])
+            Button("Previous Pane") { store.focusPane(offset: -1) }
+                .keyboardShortcut("[", modifiers: [.control, .shift])
+            Button("Next Pane") { store.focusPane(offset: 1) }
+                .keyboardShortcut("]", modifiers: [.control, .shift])
         }
         CommandMenu("Spaces") {
             Button("Next Space") { store.selectSpace(offset: 1) }

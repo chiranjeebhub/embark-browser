@@ -9,8 +9,8 @@ final class BrowserStore {
     var selectedSpaceID: Space.ID? { didSet { save() } }
     var isCommandBarOpen = false
     var isSidebarVisible = true
-    /// The tab shown on the right in split view, if any.
-    var splitTabID: BrowserTab.ID?
+    /// The next tab opened from the command bar joins this tab in a split (New Split).
+    var pendingSplitTabID: BrowserTab.ID?
     /// The sidebar shows the Create a Space form instead of favorites and tabs.
     var isCreatingSpace = false
     /// The tint picked in the Create a Space form, previewed on the window until it's created.
@@ -79,15 +79,17 @@ final class BrowserStore {
     }
 
     func closeTab(_ id: BrowserTab.ID) {
+        // Closing a split's pane focuses another pane of that split.
+        let otherPane = split(containing: id)?.tabIDs.first { $0 != id }
         mutateSelectedSpace { space in
             guard let i = space.tabs.firstIndex(where: { $0.id == id }) else { return }
             let closed = space.tabs.remove(at: i)
             space.recentlyClosed = Array(((space.recentlyClosed ?? []) + [closed]).suffix(Self.recentlyClosedLimit))
             if space.selectedTabID == id {
-                space.selectedTabID = space.tabs.indices.contains(i) ? space.tabs[i].id : space.tabs.last?.id
+                space.selectedTabID = otherPane ?? (space.tabs.indices.contains(i) ? space.tabs[i].id : space.tabs.last?.id)
             }
         }
-        if splitTabID == id { splitTabID = nil }
+        removeFromSplit(id)
     }
 
     /// Reopens a tab from the Library and takes it off the recently closed list.
@@ -97,14 +99,6 @@ final class BrowserStore {
         openTab(tab.url, title: tab.title)
     }
 
-    /// Split shows the most recently used other tab beside the current one; again closes it.
-    func toggleSplit() {
-        if splitTabID != nil { splitTabID = nil; return }
-        guard let space = selectedSpace else { return }
-        splitTabID = space.tabs
-            .filter { $0.id != space.selectedTabID }
-            .max { $0.lastActive < $1.lastActive }?.id
-    }
 
     func updateTab(_ id: BrowserTab.ID, title: String?, url: URL?) {
         for s in spaces.indices {
@@ -130,6 +124,100 @@ final class BrowserStore {
             selectTab(existing.id)
         } else {
             openTab(favorite.url, title: favorite.title)
+        }
+    }
+
+    // MARK: Split view
+
+    func split(containing tabID: BrowserTab.ID?) -> Split? {
+        guard let tabID else { return nil }
+        return selectedSpace?.splits?.first { $0.tabIDs.contains(tabID) }
+    }
+
+    /// Shows `tabIDs` (2 to 4, in order) as one split, taking them out of any other split.
+    func makeSplit(_ tabIDs: [BrowserTab.ID], isVertical: Bool = false) {
+        let ids = Array(tabIDs.prefix(Split.maxPanes))
+        guard ids.count >= 2 else { return }
+        ids.forEach(removeFromSplit)
+        mutateSelectedSpace { space in
+            space.splits = (space.splits ?? []) + [Split(tabIDs: ids, isVertical: isVertical)]
+            if !ids.contains(space.selectedTabID ?? UUID()) { space.selectedTabID = ids[0] }
+        }
+    }
+
+    /// Adds a tab as a pane next to `target` (after it, or before it with `before`), making a
+    /// split if `target` isn't in one. `isVertical` sets a new split's axis.
+    func addToSplit(_ tabID: BrowserTab.ID, beside target: BrowserTab.ID, before: Bool = false, isVertical: Bool? = nil) {
+        guard tabID != target else { return }
+        if let split = split(containing: target), !split.tabIDs.contains(tabID), split.tabIDs.count >= Split.maxPanes { return }
+        removeFromSplit(tabID)
+        if let split = split(containing: target) {
+            mutateSplit(split.id) { split in
+                let i = split.tabIDs.firstIndex(of: target)! + (before ? 0 : 1)
+                split.tabIDs.insert(tabID, at: i)
+                if let isVertical, split.tabIDs.count == 2 { split.isVertical = isVertical }
+                split.evenOut()
+            }
+        } else {
+            makeSplit(before ? [tabID, target] : [target, tabID], isVertical: isVertical ?? false)
+        }
+        selectTab(tabID)
+    }
+
+    /// Takes a tab out of its split; a split left with one pane goes back to a normal tab.
+    func removeFromSplit(_ tabID: BrowserTab.ID) {
+        mutateSelectedSpace { space in
+            guard let i = space.splits?.firstIndex(where: { $0.tabIDs.contains(tabID) }) else { return }
+            space.splits![i].tabIDs.removeAll { $0 == tabID }
+            if space.splits![i].tabIDs.count < 2 {
+                space.splits!.remove(at: i)
+            } else {
+                space.splits![i].evenOut()
+            }
+        }
+    }
+
+    /// Turns a split back into separate tabs.
+    func dissolveSplit(_ id: Split.ID) {
+        mutateSelectedSpace { $0.splits?.removeAll { $0.id == id } }
+    }
+
+    func setFractions(_ fractions: [Double], for splitID: Split.ID) {
+        mutateSplit(splitID) { $0.fractions = fractions }
+    }
+
+    func evenOutSplit(_ splitID: Split.ID) {
+        mutateSplit(splitID) { $0.evenOut() }
+    }
+
+    /// Moves a pane one place along its split, wrapping around.
+    func movePane(_ tabID: BrowserTab.ID) {
+        guard let split = split(containing: tabID) else { return }
+        mutateSplit(split.id) { split in
+            let i = split.tabIDs.firstIndex(of: tabID)!
+            split.tabIDs.swapAt(i, (i + 1) % split.tabIDs.count)
+        }
+    }
+
+    /// Moves focus to the previous or next pane of the current split.
+    func focusPane(offset: Int) {
+        guard let current = selectedTab?.id, let split = split(containing: current),
+              let i = split.tabIDs.firstIndex(of: current) else { return }
+        selectTab(split.tabIDs[(i + offset + split.tabIDs.count) % split.tabIDs.count])
+    }
+
+    /// New Split: the next tab picked in the command bar opens beside the current one.
+    func startNewSplit() {
+        guard let current = selectedTab?.id else { isCommandBarOpen = true; return }
+        if let split = split(containing: current), split.tabIDs.count >= Split.maxPanes { return }
+        pendingSplitTabID = current
+        isCommandBarOpen = true
+    }
+
+    private func mutateSplit(_ id: Split.ID, _ body: (inout Split) -> Void) {
+        mutateSelectedSpace { space in
+            guard let i = space.splits?.firstIndex(where: { $0.id == id }) else { return }
+            body(&space.splits![i])
         }
     }
 
@@ -166,6 +254,17 @@ final class BrowserStore {
 
     func moveTab(_ id: BrowserTab.ID, before index: Int?) {
         mutateSelectedSpace { Self.move(id, before: index, in: &$0.tabs) }
+    }
+
+    /// Moves tabs together, in their order, before the tab now at `index` (or to the end).
+    func moveTabs(_ ids: [BrowserTab.ID], before index: Int?) {
+        mutateSelectedSpace { space in
+            let anchor = index.flatMap { i in space.tabs[i...].first { !ids.contains($0.id) }?.id }
+            let moving = ids.compactMap { id in space.tabs.first { $0.id == id } }
+            space.tabs.removeAll { ids.contains($0.id) }
+            let at = anchor.flatMap { id in space.tabs.firstIndex { $0.id == id } } ?? space.tabs.count
+            space.tabs.insert(contentsOf: moving, at: at)
+        }
     }
 
     private static func move<Item: Identifiable>(_ id: Item.ID, before index: Int?, in items: inout [Item]) {
