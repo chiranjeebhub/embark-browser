@@ -84,6 +84,10 @@ private:
     settings.no_sandbox = true;
     CefString(&settings.root_cache_path) = cacheRoot.path.UTF8String;
     CefString(&settings.cache_path) = [cacheRoot URLByAppendingPathComponent:@"Default"].path.UTF8String;
+    // Our own keychain item for the cookie and password encryption key, instead of sharing
+    // "Chromium Safe Storage" with a real Chromium install.
+    CefString(&settings.keychain_service_name) = "Embark Safe Storage";
+    CefString(&settings.keychain_account_name) = "Embark";
 
     if (!CefInitialize(args, settings, new EmbarkApp(), nullptr)) return NO;
 
