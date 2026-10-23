@@ -5,8 +5,11 @@ import SwiftUI
 struct BrowserWindow: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
-    /// With the sidebar hidden, the title bar row appears while the pointer is at the top edge.
+    /// With the sidebar hidden, it floats over the page while the pointer is at the left edge
+    /// and slides away shortly after the pointer leaves it. Toggling it pins it open.
     @State private var isPeeking = false
+    @State private var hidePeek: Task<Void, Never>?
+    @State private var sidebarShortcut: Any?
 
     var body: some View {
         let tint = store.selectedSpace?.tint.color ?? .gray
@@ -29,9 +32,10 @@ struct BrowserWindow: View {
                 .padding(.trailing, 8)
                 .padding(.leading, store.isSidebarVisible ? 0 : 8)
         }
-        .overlay(alignment: .topLeading) {
-            if !store.isSidebarVisible { peekingTitleBar }
+        .overlay(alignment: .leading) {
+            if !store.isSidebarVisible { peekingSidebar(tint: tint) }
         }
+        .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false }
         .background(WindowButtons(isVisible: store.isSidebarVisible || isPeeking))
         .background {
             ZStack {
@@ -45,22 +49,51 @@ struct BrowserWindow: View {
         .animation(.smooth(duration: 0.35), value: store.selectedSpaceID)
         .animation(.snappy(duration: 0.2), value: store.isCommandBarOpen)
         .task { await sleepIdleTabs() }
+        .onAppear(perform: installSidebarShortcut)
+        .onDisappear { sidebarShortcut.map(NSEvent.removeMonitor); sidebarShortcut = nil }
     }
 
-    /// A strip along the top edge that reveals the traffic lights and page buttons on hover.
-    private var peekingTitleBar: some View {
-        ZStack(alignment: .topLeading) {
-            Color.clear.frame(width: 320, height: 10).contentShape(.rect)
-            if isPeeking {
-                NavigationRow(spread: false)
-                    .padding(.trailing, 10)
-                    .glassEffect(.regular, in: .rect(cornerRadius: 12))
-                    .padding([.top, .leading], 4)
-                    .transition(.opacity)
+    /// A strip along the left edge; hovering it floats the sidebar over the page, which stays put.
+    @ViewBuilder private func peekingSidebar(tint: Color) -> some View {
+        if isPeeking {
+            Sidebar()
+                // Keeps the toolbar row level with the traffic lights despite the inset.
+                .padding(.top, -6)
+                .frame(width: 264)
+                .frame(maxHeight: .infinity)
+                .glassEffect(.regular.tint(tint.opacity(0.25)), in: .rect(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.3), radius: 20, x: 4)
+                .padding([.top, .bottom, .leading], 6)
+                .onHover(perform: peek)
+                .transition(.move(edge: .leading).combined(with: .opacity))
+        } else {
+            Color.clear.frame(width: 8).frame(maxHeight: .infinity).contentShape(.rect)
+                .onHover { hovering in if hovering { peek(true) } }
+        }
+    }
+
+    private func peek(_ show: Bool) {
+        hidePeek?.cancel()
+        if show {
+            withAnimation(.sidebar) { isPeeking = true }
+        } else {
+            hidePeek = Task {
+                try? await Task.sleep(for: .seconds(0.3))
+                guard !Task.isCancelled else { return }
+                withAnimation(.sidebar) { isPeeking = false }
             }
         }
-        .onHover { hovering in withAnimation(.sidebar) { isPeeking = hovering } }
-        .onChange(of: store.isSidebarVisible) { isPeeking = false }
+    }
+
+    /// ⌘S (Arc's shortcut) toggles the sidebar too, without a second menu item for it.
+    private func installSidebarShortcut() {
+        guard sidebarShortcut == nil else { return }
+        sidebarShortcut = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers == "s" else { return event }
+            withAnimation(.sidebar) { store.isSidebarVisible.toggle() }
+            return nil
+        }
     }
 
     @ViewBuilder private var content: some View {

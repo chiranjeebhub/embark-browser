@@ -27,9 +27,7 @@ extension Animation {
     static let sidebar = Animation.snappy(duration: 0.16)
 }
 
-struct NavigationRow: View {
-    /// Pushes the page buttons to the sidebar's right edge; off when the sidebar is hidden.
-    var spread = true
+private struct NavigationRow: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
 
@@ -42,7 +40,7 @@ struct NavigationRow: View {
                 Image(systemName: "sidebar.left")
             }
             .help(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
-            if spread { Spacer() }
+            Spacer()
             Button { page?.goBack() } label: { Image(systemName: "arrow.left") }
                 .disabled(!(page?.canGoBack ?? false))
             Button { page?.goForward() } label: { Image(systemName: "arrow.right") }
@@ -80,15 +78,67 @@ private struct AddressPill: View {
     }
 }
 
+/// What a drag inside the sidebar carries. Sent as a plain string so no custom type needs
+/// registering; anything else dropped on the sidebar is ignored.
+private enum SidebarDrag {
+    case tab(BrowserTab.ID)
+    case favorite(Favorite.ID)
+
+    var token: String {
+        switch self {
+        case .tab(let id): "embark-tab:\(id.uuidString)"
+        case .favorite(let id): "embark-favorite:\(id.uuidString)"
+        }
+    }
+
+    init?(token: String) {
+        let parts = token.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let id = UUID(uuidString: parts[1]) else { return nil }
+        switch parts[0] {
+        case "embark-tab": self = .tab(id)
+        case "embark-favorite": self = .favorite(id)
+        default: return nil
+        }
+    }
+
+    /// Dropping on the favorites pins a tab or reorders a favorite, before `index` or at the end.
+    static func dropOnFavorites(_ items: [String], before index: Int?, store: BrowserStore) -> Bool {
+        guard let drag = items.lazy.compactMap(SidebarDrag.init(token:)).first else { return false }
+        withAnimation(.sidebar) {
+            switch drag {
+            case .tab(let id): store.pinTab(id, at: index)
+            case .favorite(let id): store.moveFavorite(id, before: index)
+            }
+        }
+        return true
+    }
+
+    /// Dropping on the tab list unpins a favorite or reorders a tab, before `index` or at the end.
+    static func dropOnTabs(_ items: [String], before index: Int?, store: BrowserStore) -> Bool {
+        guard let drag = items.lazy.compactMap(SidebarDrag.init(token:)).first else { return false }
+        withAnimation(.sidebar) {
+            switch drag {
+            case .tab(let id): store.moveTab(id, before: index)
+            case .favorite(let id): store.unpinFavorite(id, toTabAt: index)
+            }
+        }
+        return true
+    }
+}
+
 /// Each space's own favorites. These are its pinned sites; there is no separate pinned list.
+/// Drag a tab here to pin it, or a favorite out to the tab list to unpin it.
 private struct FavoritesGrid: View {
     let favorites: [Favorite]
     @Environment(BrowserStore.self) private var store
+    /// The favorite a drop would land before, for the insertion marker.
+    @State private var dropTarget: Favorite.ID?
+    @State private var isTargeted = false
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                ForEach(favorites) { favorite in
+                ForEach(Array(favorites.enumerated()), id: \.element.id) { index, favorite in
                     Button { store.openFavorite(favorite) } label: {
                         FaviconView(url: favorite.url, size: 22)
                             .frame(maxWidth: .infinity, minHeight: 48)
@@ -97,12 +147,40 @@ private struct FavoritesGrid: View {
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
                     .help(favorite.title)
+                    .draggable(SidebarDrag.favorite(favorite.id).token) { FaviconView(url: favorite.url, size: 22) }
+                    .dropDestination(for: String.self) { items, _ in
+                        SidebarDrag.dropOnFavorites(items, before: index, store: store)
+                    } isTargeted: { targeted in
+                        if targeted { dropTarget = favorite.id } else if dropTarget == favorite.id { dropTarget = nil }
+                    }
+                    .overlay(alignment: .leading) {
+                        if dropTarget == favorite.id {
+                            Capsule().fill(.tint).frame(width: 3).padding(.vertical, 6).offset(x: -5.5)
+                        }
+                    }
                     .contextMenu {
                         Button("Remove from Favorites", role: .destructive) { store.removeFavorite(favorite.id) }
                     }
                 }
             }
         }
+        .frame(minHeight: favorites.isEmpty ? 48 : nil)
+        .overlay {
+            if favorites.isEmpty {
+                Text("Drag a tab here to pin it").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(.tint, lineWidth: 2)
+                .padding(-4)
+                .opacity(isTargeted && dropTarget == nil ? 1 : 0)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            SidebarDrag.dropOnFavorites(items, before: nil, store: store)
+        } isTargeted: { isTargeted = $0 }
+        .animation(.sidebar, value: dropTarget)
+        .animation(.sidebar, value: isTargeted)
     }
 }
 
@@ -111,6 +189,8 @@ private struct TabList: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
     @Namespace private var selection
+    /// The tab a drop would land before, for the insertion marker.
+    @State private var dropTarget: BrowserTab.ID?
 
     var body: some View {
         ScrollView {
@@ -124,13 +204,34 @@ private struct TabList: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
 
-                ForEach(space.tabs) { tab in
+                ForEach(Array(space.tabs.enumerated()), id: \.element.id) { index, tab in
                     TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, namespace: selection)
+                        .draggable(SidebarDrag.tab(tab.id).token) {
+                            Label(tab.title, systemImage: "globe").padding(6)
+                        }
+                        .dropDestination(for: String.self) { items, _ in
+                            SidebarDrag.dropOnTabs(items, before: index, store: store)
+                        } isTargeted: { targeted in
+                            if targeted { dropTarget = tab.id } else if dropTarget == tab.id { dropTarget = nil }
+                        }
+                        .overlay(alignment: .top) {
+                            if dropTarget == tab.id {
+                                Capsule().fill(.tint).frame(height: 2).padding(.horizontal, 8).offset(y: -2)
+                            }
+                        }
                 }
             }
             .font(.system(size: 13))
+            // Room below the last tab to drop at the end of the list.
+            .padding(.bottom, 40)
+            .contentShape(.rect)
+            .dropDestination(for: String.self) { items, _ in
+                SidebarDrag.dropOnTabs(items, before: nil, store: store)
+            }
         }
         .scrollIndicators(.never)
+        .animation(.sidebar, value: space.tabs.map(\.id))
+        .animation(.sidebar, value: dropTarget)
     }
 }
 

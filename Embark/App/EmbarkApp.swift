@@ -86,10 +86,11 @@ struct BrowserCommands: Commands {
             }
         }
         CommandGroup(after: .sidebar) {
-            Button(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
+            // ⌘S also toggles it; see BrowserWindow.
+            Button("Toggle Sidebar") {
                 withAnimation(.sidebar) { store.isSidebarVisible.toggle() }
             }
-            .keyboardShortcut("s")
+            .keyboardShortcut("b")
         }
     }
 
