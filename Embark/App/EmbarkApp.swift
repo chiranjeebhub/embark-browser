@@ -29,6 +29,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    #if ENGINE_CEF
+    /// CEF must close every browser before it shuts down, so the first quit closes them and
+    /// quits again once they are gone.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard EMBCEFRuntime.hasOpenBrowsers else { return .terminateNow }
+        EMBCEFRuntime.closeAllBrowsers { sender.terminate(nil) }
+        return .terminateCancel
+    }
+    #endif
+
     func applicationWillTerminate(_ notification: Notification) {
         #if ENGINE_CEF
         EMBCEFRuntime.shutdown()

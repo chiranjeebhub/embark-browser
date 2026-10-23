@@ -47,8 +47,9 @@ xcodebuild -scheme EmbarkChromium build   # or pick the EmbarkChromium scheme in
 How the pieces fit:
 
 - `EmbarkChromium` compiles the same app with `ENGINE_CEF`, the bridging header
-  `Engine/CEF/Embark-Bridging-Header.h`, and links `libcef_dll_wrapper`. Its
-  `NSPrincipalClass` is `EMBApplication`, which CEF requires.
+  `Engine/CEF/Embark-Bridging-Header.h`, and links `libcef_dll_wrapper`. CEF needs NSApp
+  to implement `CefAppProtocol`; SwiftUI picks its own NSApplication class, so
+  `EMBCEFRuntime` adds those methods to it at startup.
 - The Chromium framework is loaded at runtime by `CefScopedLibraryLoader`, so nothing
   links against it. `scripts/embed-cef.sh` copies it into `Contents/Frameworks`.
 - `EmbarkHelper` is built once from `HelperMain.mm` and copied by the same script as
