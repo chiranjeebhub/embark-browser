@@ -14,12 +14,23 @@ struct BrowserWindow: View {
                     .frame(width: 264)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
-            content
-                .clipShape(.rect(cornerRadius: 12))
-                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-                .padding(.vertical, 8)
-                .padding(.trailing, 8)
-                .padding(.leading, store.isSidebarVisible ? 0 : 8)
+            VStack(alignment: .leading, spacing: 0) {
+                if !store.isSidebarVisible {
+                    NavigationRow(spread: false)
+                }
+                content
+                    .overlay {
+                        if store.isCommandBarOpen {
+                            CommandBar().transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }
+                    }
+                    .clipShape(.rect(cornerRadius: 12))
+                    .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+                    .padding(.top, store.isSidebarVisible ? 8 : 0)
+                    .padding(.bottom, 8)
+                    .padding(.trailing, 8)
+                    .padding(.leading, store.isSidebarVisible ? 0 : 8)
+            }
         }
         .background {
             ZStack {
@@ -29,12 +40,8 @@ struct BrowserWindow: View {
             }
             .ignoresSafeArea()
         }
+        .ignoresSafeArea(.container, edges: .top)
         .animation(.smooth(duration: 0.35), value: store.selectedSpaceID)
-        .overlay {
-            if store.isCommandBarOpen {
-                CommandBar().transition(.opacity.combined(with: .scale(scale: 0.98)))
-            }
-        }
         .animation(.snappy(duration: 0.2), value: store.isCommandBarOpen)
         .task { await sleepIdleTabs() }
     }

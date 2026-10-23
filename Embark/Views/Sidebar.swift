@@ -18,29 +18,37 @@ struct Sidebar: View {
         }
         .padding(.leading, 14)
         .padding(.trailing, 10)
-        .padding(.vertical, 12)
+        .padding(.bottom, 12)
     }
 }
 
-private struct NavigationRow: View {
+struct NavigationRow: View {
+    /// Pushes the page buttons to the sidebar's right edge; off when the sidebar is hidden.
+    var spread = true
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
 
     var body: some View {
         let page = pool.existingPage(for: store.selectedTab?.id)
         let _ = pool.revision
-        HStack(spacing: 2) {
-            Spacer()
-            Button { page?.goBack() } label: { Image(systemName: "chevron.left") }
+        // Shares the title bar row with the traffic lights, so the sidebar starts at the top.
+        HStack(spacing: 6) {
+            Button { withAnimation(.smooth) { store.isSidebarVisible.toggle() } } label: {
+                Image(systemName: "sidebar.left")
+            }
+            .help(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            if spread { Spacer() }
+            Button { page?.goBack() } label: { Image(systemName: "arrow.left") }
                 .disabled(!(page?.canGoBack ?? false))
-            Button { page?.goForward() } label: { Image(systemName: "chevron.right") }
+            Button { page?.goForward() } label: { Image(systemName: "arrow.right") }
                 .disabled(!(page?.canGoForward ?? false))
             Button { page?.reload() } label: { Image(systemName: "arrow.clockwise") }
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 13, weight: .semibold))
-        .frame(height: 22)
-        .padding(.leading, 70) // traffic lights
+        .font(.system(size: 15))
+        .foregroundStyle(.secondary)
+        .frame(height: 30)
+        .padding(.leading, 72) // traffic lights
     }
 }
 
