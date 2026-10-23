@@ -11,6 +11,12 @@ final class BrowserStore {
     var isSidebarVisible = true
     /// The tab shown on the right in split view, if any.
     var splitTabID: BrowserTab.ID?
+    /// The sidebar shows the Create a Space form instead of favorites and tabs.
+    var isCreatingSpace = false
+    /// The tint picked in the Create a Space form, previewed on the window until it's created.
+    var draftTint: SpaceTint?
+
+    static let recentlyClosedLimit = 20
 
     @ObservationIgnored private var isLoading = false
     @ObservationIgnored private let fileURL = BrowserStore.supportDirectory.appending(path: "state.json")
@@ -75,12 +81,29 @@ final class BrowserStore {
     func closeTab(_ id: BrowserTab.ID) {
         mutateSelectedSpace { space in
             guard let i = space.tabs.firstIndex(where: { $0.id == id }) else { return }
-            space.tabs.remove(at: i)
+            let closed = space.tabs.remove(at: i)
+            space.recentlyClosed = Array(((space.recentlyClosed ?? []) + [closed]).suffix(Self.recentlyClosedLimit))
             if space.selectedTabID == id {
                 space.selectedTabID = space.tabs.indices.contains(i) ? space.tabs[i].id : space.tabs.last?.id
             }
         }
         if splitTabID == id { splitTabID = nil }
+    }
+
+    /// Reopens a tab from the Library and takes it off the recently closed list.
+    func reopenClosedTab(_ id: BrowserTab.ID) {
+        guard let tab = selectedSpace?.recentlyClosed?.first(where: { $0.id == id }) else { return }
+        mutateSelectedSpace { $0.recentlyClosed?.removeAll { $0.id == id } }
+        openTab(tab.url, title: tab.title)
+    }
+
+    /// Split shows the most recently used other tab beside the current one; again closes it.
+    func toggleSplit() {
+        if splitTabID != nil { splitTabID = nil; return }
+        guard let space = selectedSpace else { return }
+        splitTabID = space.tabs
+            .filter { $0.id != space.selectedTabID }
+            .max { $0.lastActive < $1.lastActive }?.id
     }
 
     func updateTab(_ id: BrowserTab.ID, title: String?, url: URL?) {
@@ -157,10 +180,16 @@ final class BrowserStore {
 
     // MARK: Spaces
 
-    func addSpace(name: String, tint: SpaceTint, icon: String?) {
-        let profile = Profile(name: name)
-        profiles.append(profile)
-        let space = Space(name: name, tint: tint, icon: icon, profileID: profile.id)
+    /// Adds a space and switches to it. With no `profileID` it gets a new profile of its own;
+    /// otherwise it shares that profile's logins.
+    func addSpace(name: String, tint: SpaceTint, icon: String?, profileID: Profile.ID? = nil) {
+        var profileID = profileID
+        if profileID == nil {
+            let profile = Profile(name: name)
+            profiles.append(profile)
+            profileID = profile.id
+        }
+        let space = Space(name: name, tint: tint, icon: icon, profileID: profileID!)
         spaces.append(space)
         selectedSpaceID = space.id
     }

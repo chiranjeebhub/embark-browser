@@ -32,6 +32,8 @@ struct Space: Identifiable, Codable, Hashable {
     var favorites: [Favorite] = []
     var tabs: [BrowserTab] = []
     var selectedTabID: BrowserTab.ID?
+    /// Recently closed tabs, newest last, for the Library. Optional so older saved state loads.
+    var recentlyClosed: [BrowserTab]?
 }
 
 enum SpaceIcon {

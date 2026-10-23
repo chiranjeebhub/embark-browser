@@ -12,7 +12,8 @@ struct BrowserWindow: View {
     @State private var sidebarShortcut: Any?
 
     var body: some View {
-        let tint = store.selectedSpace?.tint.color ?? .gray
+        // The Create a Space form previews its tint on the whole window.
+        let tint = (store.draftTint ?? store.selectedSpace?.tint)?.color ?? .gray
         HStack(spacing: 0) {
             if store.isSidebarVisible {
                 Sidebar()
