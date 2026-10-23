@@ -110,6 +110,51 @@ final class BrowserStore {
         }
     }
 
+    // MARK: Dragging between tabs and favorites
+
+    /// Pins a tab as a favorite before `index` (or at the end). The tab stays open.
+    func pinTab(_ id: BrowserTab.ID, at index: Int?) {
+        mutateSelectedSpace { space in
+            guard let tab = space.tabs.first(where: { $0.id == id }),
+                  !space.favorites.contains(where: { $0.url == tab.url }) else { return }
+            space.favorites.insert(Favorite(title: tab.title, url: tab.url), at: Self.clamp(index, space.favorites.count))
+        }
+    }
+
+    /// Unpins a favorite, keeping it as a tab before `index`: its open tab moves there, or one is opened.
+    func unpinFavorite(_ id: Favorite.ID, toTabAt index: Int?) {
+        mutateSelectedSpace { space in
+            guard let favorite = space.favorites.first(where: { $0.id == id }) else { return }
+            space.favorites.removeAll { $0.id == id }
+            if let i = space.tabs.firstIndex(where: { $0.url.host() == favorite.url.host() }) {
+                let tab = space.tabs.remove(at: i)
+                space.tabs.insert(tab, at: Self.clamp(index.map { $0 > i ? $0 - 1 : $0 }, space.tabs.count))
+            } else {
+                let tab = BrowserTab(title: favorite.title, url: favorite.url)
+                space.tabs.insert(tab, at: Self.clamp(index, space.tabs.count))
+                space.selectedTabID = tab.id
+            }
+        }
+    }
+
+    func moveFavorite(_ id: Favorite.ID, before index: Int?) {
+        mutateSelectedSpace { Self.move(id, before: index, in: &$0.favorites) }
+    }
+
+    func moveTab(_ id: BrowserTab.ID, before index: Int?) {
+        mutateSelectedSpace { Self.move(id, before: index, in: &$0.tabs) }
+    }
+
+    private static func move<Item: Identifiable>(_ id: Item.ID, before index: Int?, in items: inout [Item]) {
+        guard let from = items.firstIndex(where: { $0.id == id }) else { return }
+        let item = items.remove(at: from)
+        items.insert(item, at: clamp(index.map { $0 > from ? $0 - 1 : $0 }, items.count))
+    }
+
+    private static func clamp(_ index: Int?, _ count: Int) -> Int {
+        min(max(index ?? count, 0), count)
+    }
+
     // MARK: Spaces
 
     func addSpace(name: String, tint: SpaceTint, icon: String?) {
