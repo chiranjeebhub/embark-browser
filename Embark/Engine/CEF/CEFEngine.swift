@@ -50,6 +50,52 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
         MainActor.assumeIsolated { report() }
     }
 
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, requestsPermissions permissions: [NSNumber], origin: String,
+                                requestID: UInt64, respond: @escaping (Bool) -> Void) {
+        nonisolated(unsafe) let respond = respond
+        MainActor.assumeIsolated {
+            let request = PermissionRequest(id: requestID, origin: origin,
+                                            permissions: permissions.compactMap { SitePermission(rawValue: $0.intValue) },
+                                            respond: { respond($0) })
+            delegate?.page(self, requestsPermission: request)
+        }
+    }
+
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, dismissedPermissionRequest requestID: UInt64) {
+        MainActor.assumeIsolated { delegate?.page(self, dismissedPermissionRequest: requestID) }
+    }
+
+    // MARK: Page info
+
+    var security: PageSecurity {
+        PageSecurity(isSecure: browser.isSecure, hasCertificateError: browser.hasCertificateError,
+                     certificate: browser.certificate.map {
+                         PageCertificate(subject: $0.subject, issuer: $0.issuer, validFrom: $0.validFrom, validUntil: $0.validUntil)
+                     })
+    }
+
+    func permission(_ permission: SitePermission) -> PermissionValue {
+        PermissionValue(rawValue: browser.permission(EMBSitePermission(rawValue: permission.rawValue)!).rawValue) ?? .default
+    }
+
+    func defaultPermission(_ permission: SitePermission) -> PermissionValue {
+        PermissionValue(rawValue: browser.defaultPermission(EMBSitePermission(rawValue: permission.rawValue)!).rawValue) ?? .default
+    }
+
+    func setPermission(_ permission: SitePermission, to value: PermissionValue) {
+        browser.setPermission(EMBSitePermission(rawValue: permission.rawValue)!, value: EMBPermissionValue(rawValue: value.rawValue)!)
+    }
+
+    func setAudioMuted(_ muted: Bool) { browser.setAudioMuted(muted) }
+
+    func countCookies(_ completion: @escaping (Int) -> Void) {
+        browser.countCookies { completion($0) }
+    }
+
+    func clearSiteData(_ completion: @escaping () -> Void) {
+        browser.clearSiteData(completion)
+    }
+
     private func report() {
         delegate?.page(self, didChangeTitle: title, url: url)
     }

@@ -135,6 +135,17 @@ struct BrowserWindow: View {
                     }
                 }
             }
+            .overlay(alignment: .top) {
+                // Permission prompts for the pages on screen, one at a time.
+                let visible = Set([tab.id] + (store.split(containing: tab.id)?.tabIDs ?? []))
+                if let request = pool.permissionRequests.first(where: { visible.contains($0.tabID) }) {
+                    PermissionPromptCard(request: request)
+                        .padding(.top, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .id(request.id)
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: pool.permissionRequests.map(\.id))
             .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
             .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
             .animation(.snappy(duration: 0.2), value: pageDropZone)
