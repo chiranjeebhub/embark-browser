@@ -5,26 +5,66 @@ struct Sidebar: View {
     @Environment(PagePool.self) private var pool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             NavigationRow()
-            AddressPill()
-            if let space = store.selectedSpace {
-                FavoritesGrid(favorites: space.favorites)
-                Divider().padding(.horizontal, 8)
-                TabList(space: space)
+            Group {
+                if store.isCreatingSpace {
+                    CreateSpaceForm()
+                } else if let space = store.selectedSpace {
+                    VStack(alignment: .leading, spacing: 14) {
+                        AddressPill()
+                        FavoritesGrid(favorites: space.favorites)
+                        Divider().padding(.horizontal, 8)
+                        TabList(space: space)
+                    }
+                    .padding(.top, 5)
+                }
             }
-            Spacer(minLength: 0)
-            SpaceSwitcher()
+            .frame(maxHeight: .infinity, alignment: .top)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            BottomBar()
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 10)
-        .padding(.bottom, 12)
+        // Same side margin as the traffic lights' left inset.
+        .padding(.horizontal, Self.margin)
+        .padding(.bottom, 6)
+        .animation(.snappy(duration: 0.22), value: store.isCreatingSpace)
     }
+
+    static let margin: CGFloat = 10
 }
 
 extension Animation {
     /// Showing and hiding the sidebar should feel instant.
     static let sidebar = Animation.snappy(duration: 0.16)
+}
+
+/// Plain SF Symbol buttons as in Arc: no background until hovered.
+private struct SidebarIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        IconButton(configuration: configuration)
+    }
+
+    private struct IconButton: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 15))
+                .foregroundStyle(.primary.opacity(isEnabled ? 0.7 : 0.3))
+                .frame(width: SidebarIconButtonStyle.size, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.primary.opacity(isEnabled && hovering ? (configuration.isPressed ? 0.14 : 0.08) : 0))
+                }
+                .contentShape(.rect)
+                .onHover { hovering = $0 }
+        }
+    }
+
+    /// Hit area width; glyphs sit about 5pt inside it.
+    static let size: CGFloat = 26
 }
 
 private struct NavigationRow: View {
@@ -34,8 +74,8 @@ private struct NavigationRow: View {
     var body: some View {
         let page = pool.existingPage(for: store.selectedTab?.id)
         let _ = pool.revision
-        // Shares the title bar row with the traffic lights, so the sidebar starts at the top.
-        HStack(spacing: 6) {
+        // Shares the title bar row with the traffic lights, on their center line (15.5pt).
+        HStack(spacing: 10) {
             Button { withAnimation(.sidebar) { store.isSidebarVisible.toggle() } } label: {
                 Image(systemName: "sidebar.left")
             }
@@ -46,35 +86,78 @@ private struct NavigationRow: View {
             Button { page?.goForward() } label: { Image(systemName: "arrow.right") }
                 .disabled(!(page?.canGoForward ?? false))
             Button { page?.reload() } label: { Image(systemName: "arrow.clockwise") }
+                .disabled(page == nil)
         }
-        .buttonStyle(.borderless)
-        .font(.system(size: 15))
-        .foregroundStyle(.secondary)
-        .frame(height: 30)
-        .padding(.leading, 72) // traffic lights
+        .buttonStyle(SidebarIconButtonStyle())
+        .frame(height: 31)
+        // The toggle's glyph starts ~12pt after the last traffic light (which ends at ~67pt);
+        // reload's glyph ends on the URL pill's right edge.
+        .padding(.leading, 64)
+        .padding(.trailing, -5)
     }
 }
 
+/// The current page's address, flat like Arc's: host only, with copy and page actions.
 private struct AddressPill: View {
     @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var justCopied = false
 
     var body: some View {
-        Button { store.isCommandBarOpen = true } label: {
-            HStack(spacing: 8) {
-                Image(systemName: store.selectedTab?.url.scheme == "https" ? "lock.fill" : "globe")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(store.selectedTab?.url.host() ?? "Search or enter address")
-                    .lineLimit(1)
+        let url = store.selectedTab?.url
+        HStack(spacing: 6) {
+            HStack(spacing: 7) {
+                if let url {
+                    Text(url.host() ?? url.absoluteString).lineLimit(1)
+                } else {
+                    Image(systemName: "magnifyingglass").font(.system(size: 12))
+                    Text("Search or Enter URL…").lineLimit(1)
+                }
                 Spacer(minLength: 0)
             }
             .font(.system(size: 13))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .frame(height: 36)
+            .foregroundStyle(.primary.opacity(0.75))
+            .frame(maxHeight: .infinity)
             .contentShape(.rect)
+            .onTapGesture { store.isCommandBarOpen = true }
+
+            if let url {
+                if justCopied {
+                    Text("Copied").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        .transition(.opacity)
+                } else {
+                    Button { copy(url) } label: { Image(systemName: "link").font(.system(size: 13)) }
+                        .help("Copy URL")
+                }
+                Menu {
+                    Button("Copy URL") { copy(url) }
+                    Button("Reload") { pool.existingPage(for: store.selectedTab?.id)?.reload() }
+                } label: {
+                    Image(systemName: "slider.horizontal.3").font(.system(size: 13))
+                }
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Page actions")
+            }
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
+        .buttonStyle(SidebarIconButtonStyle())
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
+        .frame(height: 34)
+        .background(RoundedRectangle(cornerRadius: 9.5).fill(colorScheme == .dark ? .white.opacity(0.11) : .black.opacity(0.05)))
+        .animation(.snappy(duration: 0.15), value: justCopied)
+    }
+
+    private func copy(_ url: URL) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        justCopied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            justCopied = false
+        }
     }
 }
 
@@ -421,125 +504,344 @@ private struct TabRow: View {
     }
 }
 
-/// One glass capsule: the active space expands to show its name, the others are lettered dots.
-private struct SpaceSwitcher: View {
+/// Library on the left, one glyph per space in the middle, and the + menu on the right.
+private struct BottomBar: View {
     @Environment(BrowserStore.self) private var store
-    @State private var isAdding = false
-    @Namespace private var glass
+    @State private var showsLibrary = false
+    @State private var showsNewMenu = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 2) {
-                    ForEach(store.spaces) { space in
-                        let active = space.id == store.selectedSpaceID
-                        Button { store.selectSpace(space.id) } label: {
-                            HStack(spacing: 7) {
-                                SpaceBadge(name: space.name, icon: space.icon, tint: space.tint, size: 24)
-                                if active {
-                                    Text(space.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                                }
-                            }
-                            .padding(.leading, 4)
-                            .padding(.trailing, active ? 12 : 4)
-                            .frame(height: 32)
-                            .frame(maxWidth: active ? .infinity : nil, alignment: .leading)
-                            .contentShape(.capsule)
-                        }
-                        .buttonStyle(.plain)
-                        .background {
-                            if active {
-                                Color.clear
-                                    .glassEffect(.regular.tint(.white.opacity(0.5)), in: .capsule)
-                                    .glassEffectID("active-space", in: glass)
-                            }
-                        }
-                        .help("\(space.name) space, own profile")
-                        .contextMenu {
-                            Menu("Icon") {
-                                Button("First Letter") { store.setIcon(nil, for: space.id) }
-                                Divider()
-                                ForEach(SpaceIcon.choices, id: \.self) { symbol in
-                                    Button { store.setIcon(symbol, for: space.id) } label: { Image(systemName: symbol) }
-                                }
-                            }
-                        }
-                    }
+        HStack(spacing: 0) {
+            Button { showsLibrary = true } label: { Image(systemName: "archivebox") }
+                .help("Library")
+                .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
+            Spacer(minLength: 8)
+            HStack(spacing: 16) {
+                ForEach(store.spaces) { space in
+                    SpaceGlyph(space: space, isActive: space.id == store.selectedSpaceID)
                 }
-                .padding(4)
-                .glassEffect(.regular, in: .capsule)
             }
-            Button { isAdding = true } label: { Image(systemName: "plus").frame(width: 24, height: 24) }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .help("New space with its own profile")
+            Spacer(minLength: 8)
+            Button { showsNewMenu = true } label: { Image(systemName: "plus").font(.system(size: 16)) }
+                .help("New")
+                .popover(isPresented: $showsNewMenu, arrowEdge: .top) { NewMenu(isPresented: $showsNewMenu) }
         }
-        .animation(.smooth(duration: 0.3), value: store.selectedSpaceID)
-        .sheet(isPresented: $isAdding) { NewSpaceSheet() }
+        .buttonStyle(SidebarIconButtonStyle())
+        .frame(height: 38)
+        // Line the outer glyphs up with the side margins.
+        .padding(.horizontal, -5)
     }
 }
 
-private struct NewSpaceSheet: View {
+/// A space as a plain glyph: its symbol, or its first letter. The active one is tinted.
+private struct SpaceGlyph: View {
+    let space: Space
+    let isActive: Bool
     @Environment(BrowserStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var tint = SpaceTint.teal
-    @State private var icon: String? = SpaceIcon.choices[0]
+    @State private var hovering = false
 
     var body: some View {
-        Form {
-            HStack {
-                Spacer()
-                SpaceBadge(name: name.isEmpty ? "N" : name, icon: icon, tint: tint, size: 44)
-                Spacer()
-            }
-            TextField("Name", text: $name, prompt: Text("Side project"))
-            Picker("Color", selection: $tint) {
-                ForEach(SpaceTint.allCases, id: \.self) { tint in
-                    Label(tint.rawValue.capitalized, systemImage: "circle.fill").foregroundStyle(tint.color).tag(tint)
+        Button { store.selectSpace(space.id) } label: {
+            Group {
+                if let icon = space.icon {
+                    Image(systemName: icon)
+                } else {
+                    Text(space.name.prefix(1).uppercased()).fontWeight(.bold)
                 }
             }
-            LabeledContent("Icon") {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 4), count: 8), spacing: 4) {
-                    IconChoice(symbol: nil, label: String(name.prefix(1)).uppercased(), selection: $icon, tint: tint)
-                    ForEach(SpaceIcon.choices, id: \.self) { symbol in
-                        IconChoice(symbol: symbol, label: nil, selection: $icon, tint: tint)
-                    }
+            .font(.system(size: 15))
+            .foregroundStyle(isActive ? AnyShapeStyle(space.tint.color) : AnyShapeStyle(.primary.opacity(hovering ? 0.7 : 0.35)))
+            .frame(width: 22, height: 24)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(space.name)
+        .contextMenu {
+            Menu("Icon") {
+                Button("First Letter") { store.setIcon(nil, for: space.id) }
+                Divider()
+                ForEach(SpaceIcon.choices, id: \.self) { symbol in
+                    Button { store.setIcon(symbol, for: space.id) } label: { Image(systemName: symbol) }
                 }
             }
-            Text("A new space gets its own profile, so you can sign in to a different account.")
-                .font(.footnote).foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
-        .frame(width: 360)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Create") { store.addSpace(name: name.isEmpty ? "New Space" : name, tint: tint, icon: icon); dismiss() }
-                    .buttonStyle(.glassProminent)
-            }
-        }
+        .animation(.snappy(duration: 0.15), value: hovering)
     }
 }
 
-/// The round tinted mark for a space: its icon, or the first letter of its name.
-struct SpaceBadge: View {
-    let name: String
+/// Recently closed tabs of the current space; clicking one reopens it.
+private struct LibraryPopover: View {
+    @Binding var isPresented: Bool
+    @Environment(BrowserStore.self) private var store
+
+    var body: some View {
+        let closed = (store.selectedSpace?.recentlyClosed ?? []).reversed()
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Recently Closed").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.bottom, 4)
+            if closed.isEmpty {
+                Text("No recently closed tabs").font(.system(size: 13)).foregroundStyle(.secondary)
+                    .padding(8)
+            }
+            ForEach(Array(closed)) { tab in
+                MenuRow(icon: nil, favicon: tab.url, title: tab.title) {
+                    store.reopenClosedTab(tab.id)
+                    isPresented = false
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: 260)
+    }
+}
+
+/// The + menu: what you can create.
+private struct NewMenu: View {
+    @Binding var isPresented: Bool
+    @Environment(BrowserStore.self) private var store
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            MenuRow(icon: "plus.square.on.square", title: "New Space") { run { store.isCreatingSpace = true } }
+            MenuRow(icon: "folder.badge.plus", title: "New Folder") {}.disabled(true)
+            Divider().padding(.vertical, 3)
+            MenuRow(icon: "scribble.variable", title: "New Easel") {}.disabled(true)
+            MenuRow(icon: "paintbrush.pointed", title: "New Boost") {}.disabled(true)
+            Divider().padding(.vertical, 3)
+            MenuRow(icon: "rectangle.split.2x1", title: "New Split", shortcut: "⇧⌘=") { run { store.toggleSplit() } }
+                .disabled((store.selectedSpace?.tabs.count ?? 0) < 2)
+            MenuRow(icon: "plus", title: "New Tab", shortcut: "⌘T") { run { store.isCommandBarOpen = true } }
+        }
+        .padding(6)
+        .frame(width: 230)
+    }
+
+    private func run(_ action: () -> Void) {
+        isPresented = false
+        action()
+    }
+}
+
+/// One row of a sidebar popover menu, highlighted on hover like a native menu item.
+private struct MenuRow: View {
     let icon: String?
-    let tint: SpaceTint
-    let size: CGFloat
+    var favicon: URL? = nil
+    let title: String
+    var shortcut: String? = nil
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
 
     var body: some View {
-        Group {
-            if let icon {
-                Image(systemName: icon).font(.system(size: size * 0.46, weight: .semibold))
-            } else {
-                Text(name.prefix(1).uppercased()).font(.system(size: size * 0.46, weight: .bold))
+        Button(action: action) {
+            HStack(spacing: 9) {
+                if let favicon {
+                    FaviconView(url: favicon, size: 16)
+                } else if let icon {
+                    Image(systemName: icon).frame(width: 18)
+                }
+                Text(title).lineLimit(1)
+                Spacer(minLength: 12)
+                if let shortcut {
+                    Text(shortcut).foregroundStyle(highlighted ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+                }
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(highlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary.opacity(isEnabled ? 1 : 0.35)))
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 6).fill(highlighted ? Color.accentColor : .clear))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+
+    private var highlighted: Bool { hovering && isEnabled }
+}
+
+/// Replaces the sidebar's content while making a space: name and icon, profile, theme.
+private struct CreateSpaceForm: View {
+    @Environment(BrowserStore.self) private var store
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var name = ""
+    @State private var icon: String?
+    /// nil makes a new profile; otherwise the space shares that profile's logins.
+    @State private var profileID: Profile.ID?
+    @State private var showsIcons = false
+    @State private var showsProfileInfo = false
+    @State private var showsThemes = false
+    @FocusState private var nameFocused: Bool
+
+    private var tint: SpaceTint { store.draftTint ?? .teal }
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
+    private var fieldFill: Color { colorScheme == .dark ? .white.opacity(0.11) : .black.opacity(0.05) }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Illustration(tint: tint).padding(.top, 18)
+            VStack(spacing: 5) {
+                Text("Create a Space").font(.system(size: 20, weight: .semibold))
+                Text("Separate your tabs for life, work, projects, and more.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            .padding(.bottom, 4)
+
+            HStack(spacing: 8) {
+                Button { showsIcons = true } label: {
+                    Group {
+                        if let icon { Image(systemName: icon).foregroundStyle(tint.color) } else { Image(systemName: "plus") }
+                    }
+                    .font(.system(size: 13))
+                    .frame(width: 26, height: 26)
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.secondary.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: icon == nil ? [3, 2] : [])))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Choose an icon")
+                .popover(isPresented: $showsIcons, arrowEdge: .bottom) { iconGrid }
+                TextField("Space name…", text: $name)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($nameFocused)
+                    .onSubmit(create)
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 36)
+            .background(RoundedRectangle(cornerRadius: 9).fill(fieldFill))
+
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.circle").foregroundStyle(.secondary)
+                Text("Profile")
+                Spacer(minLength: 4)
+                Picker("Profile", selection: $profileID) {
+                    Text("New Profile").tag(Profile.ID?.none)
+                    Divider()
+                    ForEach(store.profiles) { profile in Text(profile.name).tag(Profile.ID?.some(profile.id)) }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                Button { showsProfileInfo = true } label: { Image(systemName: "info.circle") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .popover(isPresented: $showsProfileInfo, arrowEdge: .bottom) {
+                        Text("A space's profile keeps its own logins, cookies and history. Spaces that share a profile share logins.")
+                            .font(.system(size: 12))
+                            .frame(width: 220)
+                            .padding(12)
+                    }
+            }
+            .font(.system(size: 13))
+
+            VStack(alignment: .leading, spacing: 10) {
+                Button { withAnimation(.snappy(duration: 0.2)) { showsThemes.toggle() } } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "paintbrush").foregroundStyle(.secondary)
+                        Text("Choose a Theme")
+                        Spacer()
+                        Circle().fill(tint.color).frame(width: 12, height: 12)
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(showsThemes ? 180 : 0))
+                    }
+                    .font(.system(size: 13))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                if showsThemes {
+                    HStack(spacing: 10) {
+                        ForEach(SpaceTint.allCases, id: \.self) { choice in
+                            Button { withAnimation(.snappy(duration: 0.2)) { store.draftTint = choice } } label: {
+                                Circle().fill(choice.color).frame(width: 22, height: 22)
+                                    .padding(3)
+                                    .overlay(Circle().strokeBorder(choice == tint ? Color.primary.opacity(0.7) : .clear, lineWidth: 2))
+                            }
+                            .buttonStyle(.plain)
+                            .help(choice.rawValue.capitalized)
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(spacing: 8) {
+                Button(action: create) {
+                    Text("Create Space")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor))
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .opacity(trimmedName.isEmpty ? 0.45 : 1)
+                .disabled(trimmedName.isEmpty)
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", action: close)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(.bottom, 8)
+        }
+        .onAppear {
+            if store.draftTint == nil {
+                let used = Set(store.spaces.map(\.tint))
+                store.draftTint = SpaceTint.allCases.first { !used.contains($0) } ?? .teal
+            }
+            nameFocused = true
+        }
+    }
+
+    private var iconGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 4), count: 6), spacing: 4) {
+            IconChoice(symbol: nil, label: String(trimmedName.prefix(1)).uppercased(), selection: $icon, tint: tint)
+            ForEach(SpaceIcon.choices, id: \.self) { symbol in
+                IconChoice(symbol: symbol, label: nil, selection: $icon, tint: tint)
             }
         }
-        .foregroundStyle(.white)
-        .frame(width: size, height: size)
-        .background(tint.color.gradient, in: .circle)
+        .padding(10)
+    }
+
+    private func create() {
+        guard !trimmedName.isEmpty else { return }
+        store.addSpace(name: trimmedName, tint: tint, icon: icon, profileID: profileID)
+        close()
+    }
+
+    private func close() {
+        store.draftTint = nil
+        store.isCreatingSpace = false
+    }
+
+    /// Three slightly fanned cards, as in Arc's space creation.
+    private struct Illustration: View {
+        let tint: SpaceTint
+
+        var body: some View {
+            ZStack {
+                card("leaf.fill", angle: -12, x: -34)
+                card("books.vertical.fill", angle: 12, x: 34)
+                card("laptopcomputer", angle: 0, x: 0)
+            }
+            .frame(height: 70)
+        }
+
+        private func card(_ symbol: String, angle: Double, x: CGFloat) -> some View {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(.background)
+                .frame(width: 50, height: 60)
+                .overlay(Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(tint.color))
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                .rotationEffect(.degrees(angle))
+                .offset(x: x, y: angle == 0 ? -4 : 2)
+        }
     }
 }
 

@@ -30,18 +30,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     #if ENGINE_CEF
+    private var isQuitting = false
+
     /// CEF must close every browser before it shuts down, so the first quit closes them and
-    /// quits again once they are gone.
+    /// quits again once they are gone. If one never reports closing, quit anyway after a few
+    /// seconds rather than leave the app impossible to quit.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard EMBCEFRuntime.hasOpenBrowsers else { return .terminateNow }
+        guard EMBCEFRuntime.hasOpenBrowsers, !isQuitting else { return .terminateNow }
+        isQuitting = true
         EMBCEFRuntime.closeAllBrowsers { sender.terminate(nil) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { sender.terminate(nil) }
         return .terminateCancel
     }
     #endif
 
     func applicationWillTerminate(_ notification: Notification) {
         #if ENGINE_CEF
-        EMBCEFRuntime.shutdown()
+        // CefShutdown stops the process on a check if a browser is still open.
+        if !EMBCEFRuntime.hasOpenBrowsers { EMBCEFRuntime.shutdown() }
         #endif
     }
 }
@@ -71,7 +77,7 @@ struct BrowserCommands: Commands {
             Divider()
             Button("Add to Favorites") { if let tab = store.selectedTab { store.addFavorite(from: tab) } }
                 .keyboardShortcut("d")
-            Button(store.splitTabID == nil ? "Split View" : "Close Split View") { toggleSplit() }
+            Button(store.splitTabID == nil ? "Split View" : "Close Split View") { store.toggleSplit() }
                 .keyboardShortcut("=", modifiers: [.command, .shift])
         }
         CommandMenu("Spaces") {
@@ -92,14 +98,5 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut("b")
         }
-    }
-
-    /// Split shows the most recently used other tab beside the current one.
-    private func toggleSplit() {
-        if store.splitTabID != nil { store.splitTabID = nil; return }
-        guard let space = store.selectedSpace else { return }
-        store.splitTabID = space.tabs
-            .filter { $0.id != space.selectedTabID }
-            .max { $0.lastActive < $1.lastActive }?.id
     }
 }
