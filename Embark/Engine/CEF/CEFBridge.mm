@@ -8,23 +8,41 @@
 #include "include/wrapper/cef_library_loader.h"
 
 #include <map>
+#include <objc/runtime.h>
 #include <string>
 
 // MARK: - Application
 
-@interface EMBApplication () <CefAppProtocol> {
-    BOOL _handlingSendEvent;
-}
-@end
+// CEF needs NSApp to implement CefAppProtocol. SwiftUI's App lifecycle creates its own
+// NSApplication subclass and ignores NSPrincipalClass, so the methods are added at runtime.
+namespace {
 
-@implementation EMBApplication
-- (BOOL)isHandlingSendEvent { return _handlingSendEvent; }
-- (void)setHandlingSendEvent:(BOOL)handlingSendEvent { _handlingSendEvent = handlingSendEvent; }
-- (void)sendEvent:(NSEvent *)event {
+BOOL gHandlingSendEvent = NO;
+IMP gOriginalSendEvent = nullptr;
+
+void SendEventTrackingCEF(id self, SEL _cmd, NSEvent *event) {
     CefScopedSendingEvent sendingEventScoper;
-    [super sendEvent:event];
+    ((void (*)(id, SEL, NSEvent *))gOriginalSendEvent)(self, _cmd, event);
 }
-@end
+
+void InstallCefAppProtocol(NSApplication *app) {
+    Class cls = [app class];
+    if ([cls conformsToProtocol:@protocol(CefAppProtocol)]) return;
+    class_addMethod(cls, @selector(isHandlingSendEvent),
+                    imp_implementationWithBlock(^BOOL(id) { return gHandlingSendEvent; }), "B@:");
+    class_addMethod(cls, @selector(setHandlingSendEvent:),
+                    imp_implementationWithBlock(^(id, BOOL handling) { gHandlingSendEvent = handling; }), "v@:B");
+    Method sendEvent = class_getInstanceMethod(cls, @selector(sendEvent:));
+    gOriginalSendEvent = method_getImplementation(sendEvent);
+    // Add an override on this class so NSApplication itself stays untouched; replace only if
+    // the class already defines its own sendEvent:.
+    if (!class_addMethod(cls, @selector(sendEvent:), (IMP)SendEventTrackingCEF, method_getTypeEncoding(sendEvent))) {
+        method_setImplementation(sendEvent, (IMP)SendEventTrackingCEF);
+    }
+    class_addProtocol(cls, @protocol(CefAppProtocol));
+}
+
+}  // namespace
 
 // MARK: - Runtime and message pump
 
@@ -32,6 +50,9 @@ namespace {
 
 CefScopedLibraryLoader *gLibraryLoader = nullptr;
 NSTimer *gPumpTimer = nil;
+// Every open browser, so they can all be closed before CefShutdown (which requires it).
+std::map<int, CefRefPtr<CefBrowser>> gBrowsers;
+void (^gAllBrowsersClosed)(void) = nil;
 
 // Embark keeps AppKit's run loop and drives CEF with an external message pump.
 class EmbarkApp : public CefApp, public CefBrowserProcessHandler {
@@ -52,13 +73,15 @@ private:
 @implementation EMBCEFRuntime
 
 + (BOOL)startWithCacheRoot:(NSURL *)cacheRoot {
+    InstallCefAppProtocol(NSApplication.sharedApplication);
     gLibraryLoader = new CefScopedLibraryLoader();
     if (!gLibraryLoader->LoadInMain()) return NO;
 
     CefMainArgs args(0, nullptr);
     CefSettings settings;
     settings.external_message_pump = true;
-    settings.no_sandbox = false;
+    // The macOS sandbox needs cef_sandbox linked into every helper; turned off until then.
+    settings.no_sandbox = true;
     CefString(&settings.root_cache_path) = cacheRoot.path.UTF8String;
     CefString(&settings.cache_path) = [cacheRoot URLByAppendingPathComponent:@"Default"].path.UTF8String;
 
@@ -69,6 +92,15 @@ private:
         CefDoMessageLoopWork();
     }];
     return YES;
+}
+
++ (BOOL)hasOpenBrowsers { return !gBrowsers.empty(); }
+
++ (void)closeAllBrowsers:(void (^)(void))completion {
+    if (gBrowsers.empty()) { dispatch_async(dispatch_get_main_queue(), completion); return; }
+    gAllBrowsersClosed = [completion copy];
+    auto browsers = gBrowsers;
+    for (auto &entry : browsers) entry.second->GetHost()->CloseBrowser(true);
 }
 
 + (void)shutdown {
@@ -117,7 +149,25 @@ public:
     }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+        gBrowsers[browser->GetIdentifier()] = browser;
         [owner_ handleCreated:browser];
+    }
+
+    // A tab is a child view of the shared window, so closing one must not send performClose:
+    // to that window (CEF's default). Removing CEF's view instead finishes the close.
+    bool DoClose(CefRefPtr<CefBrowser> browser) override {
+        NSView *hostView = CAST_CEF_WINDOW_HANDLE_TO_NSVIEW(browser->GetHost()->GetWindowHandle());
+        [hostView removeFromSuperview];
+        return true;
+    }
+
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+        gBrowsers.erase(browser->GetIdentifier());
+        if (gBrowsers.empty() && gAllBrowsersClosed) {
+            auto completion = gAllBrowsersClosed;
+            gAllBrowsersClosed = nil;
+            dispatch_async(dispatch_get_main_queue(), completion);
+        }
     }
 
     // Popups and target=_blank become tabs in the same space instead of new windows.

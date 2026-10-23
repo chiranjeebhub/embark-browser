@@ -7,7 +7,7 @@ final class CEFEngine: BrowserEngine {
     static let cacheRoot = BrowserStore.supportDirectory.appending(path: "Chromium", directoryHint: .isDirectory)
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
-        let directory = Self.cacheRoot.appending(path: "Profiles/\(profile.id.uuidString)", directoryHint: .isDirectory)
+        let directory = Self.cacheRoot.appending(path: "Profile-\(profile.id.uuidString)", directoryHint: .isDirectory)
         return CEFPage(browser: EMBCEFBrowser(url: url, profileDirectory: directory))
     }
 }

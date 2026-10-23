@@ -18,11 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Show toolchain
-        run: |
-          sw_vers
-          xcodebuild -version
-
       - name: Generate Xcode project
         run: |
           brew install xcodegen
@@ -37,24 +32,67 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO \
-            build | tee build.log
+            build 2>&1 | tee build.log
 
       - name: Summarize build
         if: always()
-        run: |
-          # Surface the result as annotations so it is readable without downloading logs.
-          echo "::notice title=Toolchain::$(xcodebuild -version | tr '\n' ' ') on macOS $(sw_vers -productVersion)"
-          echo "::notice title=Result::$(grep -E 'BUILD (SUCCEEDED|FAILED)' build.log | tail -1), $(grep -cE '^SwiftCompile|^CompileSwift' build.log) Swift compile steps"
-          grep -E ': (error|warning): ' build.log | sort -u | head -40 | while IFS= read -r line; do
-            case "$line" in
-              *": error: "*) echo "::error::${line#$GITHUB_WORKSPACE/}" ;;
-              *) echo "::warning::${line#$GITHUB_WORKSPACE/}" ;;
-            esac
-          done
+        run: scripts/ci-summarize.sh build.log WebKit
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: build-log
+          name: build-log-webkit
           path: build.log
+
+  chromium:
+    name: macOS app (Chromium engine)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download and build CEF
+        run: |
+          set -o pipefail
+          command -v cmake >/dev/null || brew install cmake
+          scripts/fetch-cef.sh 2>&1 | tee cef.log
+          echo "::notice title=CEF::$(grep -m1 '^Downloading' cef.log)"
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Embark.xcodeproj \
+            -scheme EmbarkChromium \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee build.log
+
+      - name: Check app bundle
+        run: |
+          APP="$(find ~/Library/Developer/Xcode/DerivedData -path '*Debug-chromium/Embark.app' -maxdepth 6 | head -1)"
+          echo "::notice title=Chromium bundle::$(ls "$APP/Contents/Frameworks" | tr '\n' ', ')"
+
+      - name: Summarize build
+        if: always()
+        run: |
+          if [ -f cef.log ] && ! grep -q '^Done. CEF is in' cef.log; then
+            tail -25 cef.log | while IFS= read -r l; do echo "::error title=CEF setup::$l"; done
+          fi
+          scripts/ci-summarize.sh build.log Chromium
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: build-log-chromium
+          path: |
+            build.log
+            cef.log

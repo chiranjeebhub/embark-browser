@@ -26,10 +26,22 @@ struct Space: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
     var tint: SpaceTint
+    /// SF Symbol shown in the space switcher. nil shows the name's first letter.
+    var icon: String?
     var profileID: Profile.ID
     var favorites: [Favorite] = []
     var tabs: [BrowserTab] = []
     var selectedTabID: BrowserTab.ID?
+}
+
+enum SpaceIcon {
+    /// Symbols offered when creating or editing a space.
+    static let choices = [
+        "house.fill", "briefcase.fill", "person.fill", "person.2.fill", "graduationcap.fill", "book.fill",
+        "hammer.fill", "chevron.left.forwardslash.chevron.right", "paintbrush.fill", "camera.fill", "music.note", "gamecontroller.fill",
+        "cart.fill", "creditcard.fill", "chart.line.uptrend.xyaxis", "airplane", "heart.fill", "star.fill",
+        "leaf.fill", "flame.fill", "bolt.fill", "globe.americas.fill", "sparkles", "moon.fill",
+    ]
 }
 
 enum SpaceTint: String, Codable, CaseIterable {

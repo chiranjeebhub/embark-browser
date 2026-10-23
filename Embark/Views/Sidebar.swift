@@ -18,29 +18,42 @@ struct Sidebar: View {
         }
         .padding(.leading, 14)
         .padding(.trailing, 10)
-        .padding(.vertical, 12)
+        .padding(.bottom, 12)
     }
 }
 
-private struct NavigationRow: View {
+extension Animation {
+    /// Showing and hiding the sidebar should feel instant.
+    static let sidebar = Animation.snappy(duration: 0.16)
+}
+
+struct NavigationRow: View {
+    /// Pushes the page buttons to the sidebar's right edge; off when the sidebar is hidden.
+    var spread = true
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
 
     var body: some View {
         let page = pool.existingPage(for: store.selectedTab?.id)
         let _ = pool.revision
-        HStack(spacing: 2) {
-            Spacer()
-            Button { page?.goBack() } label: { Image(systemName: "chevron.left") }
+        // Shares the title bar row with the traffic lights, so the sidebar starts at the top.
+        HStack(spacing: 6) {
+            Button { withAnimation(.sidebar) { store.isSidebarVisible.toggle() } } label: {
+                Image(systemName: "sidebar.left")
+            }
+            .help(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            if spread { Spacer() }
+            Button { page?.goBack() } label: { Image(systemName: "arrow.left") }
                 .disabled(!(page?.canGoBack ?? false))
-            Button { page?.goForward() } label: { Image(systemName: "chevron.right") }
+            Button { page?.goForward() } label: { Image(systemName: "arrow.right") }
                 .disabled(!(page?.canGoForward ?? false))
             Button { page?.reload() } label: { Image(systemName: "arrow.clockwise") }
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 13, weight: .semibold))
-        .frame(height: 22)
-        .padding(.leading, 70) // traffic lights
+        .font(.system(size: 15))
+        .foregroundStyle(.secondary)
+        .frame(height: 30)
+        .padding(.leading, 72) // traffic lights
     }
 }
 
@@ -177,11 +190,7 @@ private struct SpaceSwitcher: View {
                         let active = space.id == store.selectedSpaceID
                         Button { store.selectSpace(space.id) } label: {
                             HStack(spacing: 7) {
-                                Text(space.name.prefix(1))
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 24, height: 24)
-                                    .background(space.tint.color, in: .circle)
+                                SpaceBadge(name: space.name, icon: space.icon, tint: space.tint, size: 24)
                                 if active {
                                     Text(space.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                                 }
@@ -201,6 +210,15 @@ private struct SpaceSwitcher: View {
                             }
                         }
                         .help("\(space.name) space, own profile")
+                        .contextMenu {
+                            Menu("Icon") {
+                                Button("First Letter") { store.setIcon(nil, for: space.id) }
+                                Divider()
+                                ForEach(SpaceIcon.choices, id: \.self) { symbol in
+                                    Button { store.setIcon(symbol, for: space.id) } label: { Image(systemName: symbol) }
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(4)
@@ -221,13 +239,27 @@ private struct NewSpaceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var tint = SpaceTint.teal
+    @State private var icon: String? = SpaceIcon.choices[0]
 
     var body: some View {
         Form {
+            HStack {
+                Spacer()
+                SpaceBadge(name: name.isEmpty ? "N" : name, icon: icon, tint: tint, size: 44)
+                Spacer()
+            }
             TextField("Name", text: $name, prompt: Text("Side project"))
             Picker("Color", selection: $tint) {
                 ForEach(SpaceTint.allCases, id: \.self) { tint in
                     Label(tint.rawValue.capitalized, systemImage: "circle.fill").foregroundStyle(tint.color).tag(tint)
+                }
+            }
+            LabeledContent("Icon") {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 4), count: 8), spacing: 4) {
+                    IconChoice(symbol: nil, label: String(name.prefix(1)).uppercased(), selection: $icon, tint: tint)
+                    ForEach(SpaceIcon.choices, id: \.self) { symbol in
+                        IconChoice(symbol: symbol, label: nil, selection: $icon, tint: tint)
+                    }
                 }
             }
             Text("A new space gets its own profile, so you can sign in to a different account.")
@@ -238,10 +270,54 @@ private struct NewSpaceSheet: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Create") { store.addSpace(name: name.isEmpty ? "New Space" : name, tint: tint); dismiss() }
+                Button("Create") { store.addSpace(name: name.isEmpty ? "New Space" : name, tint: tint, icon: icon); dismiss() }
                     .buttonStyle(.glassProminent)
             }
         }
+    }
+}
+
+/// The round tinted mark for a space: its icon, or the first letter of its name.
+struct SpaceBadge: View {
+    let name: String
+    let icon: String?
+    let tint: SpaceTint
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let icon {
+                Image(systemName: icon).font(.system(size: size * 0.46, weight: .semibold))
+            } else {
+                Text(name.prefix(1).uppercased()).font(.system(size: size * 0.46, weight: .bold))
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(width: size, height: size)
+        .background(tint.color.gradient, in: .circle)
+    }
+}
+
+private struct IconChoice: View {
+    let symbol: String?
+    let label: String?
+    @Binding var selection: String?
+    let tint: SpaceTint
+
+    var body: some View {
+        let selected = selection == symbol
+        Button { selection = symbol } label: {
+            Group {
+                if let symbol { Image(systemName: symbol) } else { Text(label?.isEmpty == false ? label! : "A").fontWeight(.bold) }
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(selected ? .white : .secondary)
+            .frame(width: 26, height: 26)
+            .background(selected ? AnyShapeStyle(tint.color) : AnyShapeStyle(.quaternary.opacity(0.5)), in: .rect(cornerRadius: 7))
+            .contentShape(.rect(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help(symbol ?? "First letter of the name")
     }
 }
 

@@ -35,30 +35,33 @@ struct CommandBar: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.12).ignoresSafeArea().onTapGesture { close() }
-            VStack(spacing: 6) {
-                HStack(spacing: 12) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search tabs, or type a URL", text: $query)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 19))
-                        .focused($focused)
-                        .onSubmit { activate(highlighted) }
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 54)
-                .background(.white.opacity(0.5), in: .rect(cornerRadius: 16))
+        // Sits over the page area; the field starts near its middle and results grow downward.
+        GeometryReader { geo in
+            ZStack(alignment: .top) {
+                Color.black.opacity(0.12).onTapGesture { close() }
+                VStack(spacing: 6) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Search tabs, or type a URL", text: $query)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 19))
+                            .focused($focused)
+                            .onSubmit { activate(highlighted) }
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 54)
+                    .background(.white.opacity(0.5), in: .rect(cornerRadius: 16))
 
-                ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
-                    row(result, highlighted: index == highlighted)
-                        .onTapGesture { activate(index) }
+                    ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
+                        row(result, highlighted: index == highlighted)
+                            .onTapGesture { activate(index) }
+                    }
                 }
+                .padding(10)
+                .frame(width: min(640, geo.size.width - 48))
+                .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                .padding(.top, max(24, geo.size.height * 0.5 - 37))
             }
-            .padding(10)
-            .frame(width: 640)
-            .glassEffect(.regular, in: .rect(cornerRadius: 24))
-            .padding(.top, 120)
         }
         .onAppear { focused = true }
         .onChange(of: query) { highlighted = 0 }

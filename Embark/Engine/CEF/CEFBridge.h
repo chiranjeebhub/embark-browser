@@ -7,7 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @protocol EMBCEFBrowserDelegate <NSObject>
 - (void)cefBrowser:(EMBCEFBrowser *)browser didChangeTitle:(nullable NSString *)title;
-- (void)cefBrowser:(EMBCEFBrowser *)browser didChangeURL:(nullable NSURL *)url;
+- (void)cefBrowser:(EMBCEFBrowser *)browser didChangeURL:(nullable NSURL *)url NS_SWIFT_NAME(cefBrowser(_:didChangeURL:));
 - (void)cefBrowser:(EMBCEFBrowser *)browser requestsNewTab:(NSURL *)url;
 - (void)cefBrowserDidChangeNavigationState:(EMBCEFBrowser *)browser;
 @end
@@ -15,6 +15,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Process-wide CEF setup. Call `startWithCacheRoot:` once, before any window appears.
 @interface EMBCEFRuntime : NSObject
 + (BOOL)startWithCacheRoot:(NSURL *)cacheRoot;
+@property (class, nonatomic, readonly) BOOL hasOpenBrowsers;
+/// Closes every browser and calls `completion` once they are gone. Call before `shutdown`.
++ (void)closeAllBrowsers:(void (^)(void))completion;
 + (void)shutdown;
 @end
 
@@ -30,11 +33,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)goForward;
 - (void)reload;
 - (void)close;
-@end
-
-/// CEF requires the NSApplication subclass to implement CefAppProtocol.
-/// Info.plist must set NSPrincipalClass to EMBApplication when the CEF engine is on.
-@interface EMBApplication : NSApplication
 @end
 
 NS_ASSUME_NONNULL_END
