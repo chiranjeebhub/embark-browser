@@ -66,6 +66,12 @@ xcodebuild test -project Embark.xcodeproj -scheme EmbarkTests -destination 'plat
 | Next / previous space | ⌘⌥→ / ⌘⌥← |
 | Jump to space 1 to 9 | ⌃1 … ⌃9 |
 
+## Contributing
+
+Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report security issues privately, as described in
+[SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

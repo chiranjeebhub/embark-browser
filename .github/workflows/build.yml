@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Pull requests from forks run with a read-only token and no secrets.
+permissions:
+  contents: read
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -34,6 +38,16 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee build.log
 
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Embark.xcodeproj \
+            -scheme EmbarkTests \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            test 2>&1 | tee test.log | tail -40
+
       - name: Summarize build
         if: always()
         run: scripts/ci-summarize.sh build.log WebKit
@@ -43,7 +57,9 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: build-log-webkit
-          path: build.log
+          path: |
+            build.log
+            test.log
 
   chromium:
     name: macOS app (Chromium engine)
