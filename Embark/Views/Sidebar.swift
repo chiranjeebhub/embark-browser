@@ -214,6 +214,7 @@ enum SidebarDrag: Equatable {
     case tab(BrowserTab.ID)
     case favorite(Favorite.ID)
     case split(Split.ID)
+    case folder(Folder.ID)
 
     /// The drag in progress, so drop targets can show its placeholder while hovering. Drops
     /// themselves trust only the dragged string, since this can be stale after a cancelled drag.
@@ -224,12 +225,16 @@ enum SidebarDrag: Equatable {
         case .tab(let id): "embark-tab:\(id.uuidString)"
         case .favorite(let id): "embark-favorite:\(id.uuidString)"
         case .split(let id): "embark-split:\(id.uuidString)"
+        case .folder(let id): "embark-folder:\(id.uuidString)"
         }
     }
 
-    /// Tabs and favorites can become split panes; a whole split can't.
+    /// Tabs and favorites can become split panes or favorites; splits and folders can't.
     var canSplit: Bool {
-        if case .split = self { false } else { true }
+        switch self {
+        case .tab, .favorite: true
+        case .split, .folder: false
+        }
     }
 
     init?(token: String) {
@@ -239,6 +244,7 @@ enum SidebarDrag: Equatable {
         case "embark-tab": self = .tab(id)
         case "embark-favorite": self = .favorite(id)
         case "embark-split": self = .split(id)
+        case "embark-folder": self = .folder(id)
         default: return nil
         }
     }
@@ -249,6 +255,7 @@ enum SidebarDrag: Equatable {
         case .favorite(let id): space.favorites.first { $0.id == id }?.url
         case .split(let id):
             space.splits?.first { $0.id == id }.flatMap { split in space.tabs.first { $0.id == split.tabIDs.first }?.url }
+        case .folder: nil
         }
     }
 
@@ -404,7 +411,7 @@ private struct FavoritesGrid: View {
                     case .favorite(let id):
                         let from = favorites.firstIndex { $0.id == id } ?? index
                         store.moveFavorite(id, before: index >= from ? index + 1 : index)
-                    case .split, nil: break
+                    case .split, .folder, nil: break
                     }
                 }
                 SidebarDrag.current = nil
@@ -413,9 +420,11 @@ private struct FavoritesGrid: View {
     }
 }
 
-/// Open tabs, with each split as one row. Dragging a tab, favorite or split over the list
-/// opens a row-height gap at the drop spot. ⌘- or ⇧-click marks several tabs, to open them
-/// in split view from the context menu.
+/// The space's folders, then its loose tabs, with each split as one row. Folders nest and
+/// collapse like Arc's; a collapsed folder still shows the selected tab if it's inside.
+/// Dragging a tab, favorite, split or folder over the list opens a row-height gap at the drop
+/// spot, indented to the folder it would land in, and hovering a collapsed folder springs it
+/// open. ⌘- or ⇧-click marks several tabs for the context menu.
 private struct TabList: View {
     let space: Space
     @Environment(BrowserStore.self) private var store
@@ -425,49 +434,97 @@ private struct TabList: View {
     @State private var gap: Int?
     /// Tabs marked with ⌘- or ⇧-click.
     @State private var marked: [BrowserTab.ID] = []
+    /// The collapsed folder a drag is hovering, and when it started, to spring it open.
+    @State private var springFolder: Folder.ID?
 
     private static let headerHeight: CGFloat = 34
     private static let rowHeight: CGFloat = 36
     private static let spacing: CGFloat = 2
+    static let indent: CGFloat = 16
 
     private enum Row: Identifiable {
-        case tab(BrowserTab), split(Split, [BrowserTab]), gap
+        case folder(Folder, depth: Int)
+        case tab(BrowserTab, depth: Int, container: Folder.ID?)
+        case split(Split, [BrowserTab], depth: Int, container: Folder.ID?)
+        case gap(depth: Int)
+
         var id: String {
             switch self {
-            case .tab(let tab): tab.id.uuidString
-            case .split(let split, _): split.id.uuidString
+            case .folder(let folder, _): folder.id.uuidString
+            case .tab(let tab, _, _): tab.id.uuidString
+            case .split(let split, _, _, _): split.id.uuidString
             case .gap: "gap"
             }
         }
+
+        var depth: Int {
+            switch self {
+            case .folder(_, let depth), .tab(_, let depth, _), .split(_, _, let depth, _), .gap(let depth): depth
+            }
+        }
+
+        /// The folder the row sits in.
+        var container: Folder.ID? {
+            switch self {
+            case .folder(let folder, _): folder.parentID
+            case .tab(_, _, let container), .split(_, _, _, let container): container
+            case .gap: nil
+            }
+        }
+
         var firstTabID: BrowserTab.ID? {
             switch self {
-            case .tab(let tab): tab.id
-            case .split(_, let tabs): tabs.first?.id
-            case .gap: nil
+            case .tab(let tab, _, _): tab.id
+            case .split(_, let tabs, _, _): tabs.first?.id
+            default: nil
             }
         }
     }
 
-    /// Rows other than the one being dragged, which gives up its place to the gap. A split
-    /// shows once, where its first tab is.
+    /// Rows other than the one being dragged, which gives up its place to the gap.
     private var staying: [Row] {
         let dragged = gap == nil ? nil : SidebarDrag.current
         var rows: [Row] = []
-        var shown = Set<Split.ID>()
-        for tab in space.tabs where dragged != .tab(tab.id) {
-            if let split = space.splits?.first(where: { $0.tabIDs.contains(tab.id) }) {
-                guard dragged != .split(split.id), shown.insert(split.id).inserted else { continue }
-                rows.append(.split(split, split.tabIDs.compactMap { id in space.tabs.first { $0.id == id } }))
-            } else {
-                rows.append(.tab(tab))
+        var shownSplits = Set<Split.ID>()
+        let selectedID = space.selectedTabID
+
+        func appendTabs(in container: Folder.ID?, depth: Int, only: BrowserTab.ID? = nil) {
+            for tab in space.tabs where tab.folderID == container && dragged != .tab(tab.id) {
+                if let only, tab.id != only, space.splits?.first(where: { $0.tabIDs.contains(only) })?.tabIDs.contains(tab.id) != true { continue }
+                if let split = space.splits?.first(where: { $0.tabIDs.contains(tab.id) }) {
+                    guard dragged != .split(split.id), shownSplits.insert(split.id).inserted else { continue }
+                    rows.append(.split(split, split.tabIDs.compactMap { id in space.tabs.first { $0.id == id } },
+                                       depth: depth, container: container))
+                } else {
+                    rows.append(.tab(tab, depth: depth, container: container))
+                }
             }
         }
+
+        func appendFolder(_ folder: Folder, depth: Int) {
+            guard dragged != .folder(folder.id) else { return }
+            rows.append(.folder(folder, depth: depth))
+            if folder.isExpanded {
+                for sub in space.subfolders(of: folder.id) { appendFolder(sub, depth: depth + 1) }
+                appendTabs(in: folder.id, depth: depth + 1)
+            } else if let selectedID, let tab = space.tabs.first(where: { $0.id == selectedID }),
+                      let folderID = tab.folderID, space.folderAndDescendants(folder.id).contains(folderID) {
+                // Arc keeps the selected tab visible under its collapsed folder.
+                appendTabs(in: folderID, depth: depth + 1, only: selectedID)
+            }
+        }
+
+        for folder in space.subfolders(of: nil) { appendFolder(folder, depth: 0) }
+        appendTabs(in: nil, depth: 0)
         return rows
     }
 
     private var rows: [Row] {
         var rows = staying
-        if let gap { rows.insert(.gap, at: min(gap, rows.count)) }
+        if let gap {
+            let index = min(gap, rows.count)
+            rows.insert(.gap(depth: dropTarget(at: index, in: rows).depth), at: index)
+        }
         return rows
     }
 
@@ -484,20 +541,7 @@ private struct TabList: View {
                 .foregroundStyle(.secondary)
 
                 ForEach(rows) { row in
-                    switch row {
-                    case .tab(let tab):
-                        TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, isMarked: marked.contains(tab.id),
-                               splitCandidates: marked.count >= 2 && marked.contains(tab.id) ? marked : [],
-                               namespace: selection, onSelect: { select(tab.id) }, onSplit: { marked = [] })
-                            .onDrag { SidebarDrag.tab(tab.id).itemProvider(pool: pool) }
-                    case .split(let split, let tabs):
-                        SplitRow(split: split, tabs: tabs, isSelected: split.tabIDs.contains(space.selectedTabID ?? UUID()),
-                                 namespace: selection)
-                            .onDrag { SidebarDrag.split(split.id).itemProvider(pool: pool) }
-                    case .gap:
-                        DropPlaceholder(url: SidebarDrag.current?.url(in: space), cornerRadius: 10)
-                            .frame(height: Self.rowHeight)
-                    }
+                    rowView(row).modifier(Indented(depth: row.depth))
                 }
             }
             .font(.system(size: 13))
@@ -511,11 +555,31 @@ private struct TabList: View {
         .onChange(of: space.id) { marked = [] }
     }
 
+    @ViewBuilder private func rowView(_ row: Row) -> some View {
+        switch row {
+        case .folder(let folder, let depth):
+            FolderRow(folder: folder, depth: depth, space: space)
+                .onDrag { SidebarDrag.folder(folder.id).itemProvider(pool: pool) }
+        case .tab(let tab, _, _):
+            TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, isMarked: marked.contains(tab.id),
+                   markedTabs: marked.count >= 2 && marked.contains(tab.id) ? marked : [],
+                   namespace: selection, onSelect: { select(tab.id) }, onMarkedUsed: { marked = [] })
+                .onDrag { SidebarDrag.tab(tab.id).itemProvider(pool: pool) }
+        case .split(let split, let tabs, _, _):
+            SplitRow(split: split, tabs: tabs, isSelected: split.tabIDs.contains(space.selectedTabID ?? UUID()),
+                     namespace: selection)
+                .onDrag { SidebarDrag.split(split.id).itemProvider(pool: pool) }
+        case .gap:
+            DropPlaceholder(url: SidebarDrag.current?.url(in: space), cornerRadius: 10)
+                .frame(height: Self.rowHeight)
+        }
+    }
+
     /// A plain click selects; ⌘-click toggles a mark and ⇧-click marks a range, starting
     /// from the selected tab.
     private func select(_ id: BrowserTab.ID) {
         let flags = NSApp.currentEvent?.modifierFlags ?? []
-        let order = staying.compactMap { row -> BrowserTab.ID? in if case .tab(let tab) = row { tab.id } else { nil } }
+        let order = staying.compactMap { row -> BrowserTab.ID? in if case .tab(let tab, _, _) = row { tab.id } else { nil } }
         if flags.contains(.command) {
             if marked.isEmpty, let current = space.selectedTabID, current != id, order.contains(current) { marked = [current] }
             if let i = marked.firstIndex(of: id) { marked.remove(at: i) } else { marked.append(id) }
@@ -528,11 +592,31 @@ private struct TabList: View {
         }
     }
 
+    /// Where a drop before row `index` lands: right under an expanded folder's header it goes
+    /// into that folder; otherwise into the folder of the row after it (the space's loose tabs
+    /// at the end).
+    private func dropTarget(at index: Int, in rows: [Row]) -> (folder: Folder.ID?, before: Row?, depth: Int) {
+        if index > 0, case .folder(let folder, let depth) = rows[index - 1], folder.isExpanded {
+            return (folder.id, rows.indices.contains(index) ? rows[index] : nil, depth + 1)
+        }
+        guard rows.indices.contains(index) else { return (nil, nil, 0) }
+        let next = rows[index]
+        return (next.container, next, next.depth)
+    }
+
     /// The insertion point nearest the pointer, between rows.
     private func dropIndex(at point: CGPoint) -> Int {
         let y = point.y - Self.headerHeight - Self.spacing
         let index = Int((y / (Self.rowHeight + Self.spacing)).rounded())
         return min(max(index, 0), staying.count)
+    }
+
+    /// The row under the pointer, for springing folders open.
+    private func row(at point: CGPoint) -> Row? {
+        let y = point.y - Self.headerHeight - Self.spacing
+        let rows = rows
+        let index = Int(floor(y / (Self.rowHeight + Self.spacing)))
+        return rows.indices.contains(index) ? rows[index] : nil
     }
 
     private struct DropHandler: DropDelegate {
@@ -543,28 +627,53 @@ private struct TabList: View {
         func dropUpdated(info: DropInfo) -> DropProposal? {
             let index = list.dropIndex(at: info.location)
             if list.gap != index { withAnimation(.dropReflow) { list.gap = index } }
+            springOpen(list.row(at: info.location))
             return DropProposal(operation: .move)
         }
 
+        /// A collapsed folder hovered for half a second opens.
+        private func springOpen(_ row: Row?) {
+            guard case .folder(let folder, _) = row, !folder.isExpanded else { list.springFolder = nil; return }
+            guard list.springFolder != folder.id else { return }
+            list.springFolder = folder.id
+            let store = list.store, spring = list.$springFolder
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                guard spring.wrappedValue == folder.id else { return }
+                withAnimation(.dropReflow) { store.setFolderExpanded(folder.id, true) }
+            }
+        }
+
         func dropExited(info: DropInfo) {
+            list.springFolder = nil
             withAnimation(.dropReflow) { list.gap = nil }
         }
 
         func performDrop(info: DropInfo) -> Bool {
-            let rows = list.staying, row = list.gap ?? rows.count
-            let tabs = list.space.tabs, store = list.store, gap = list.$gap
-            // The gap sits before a row; the store wants the index of that row's first tab.
-            let index = rows.indices.contains(row) ? rows[row].firstTabID.flatMap { id in tabs.firstIndex { $0.id == id } } : nil
+            let rows = list.staying
+            let target = list.dropTarget(at: list.gap ?? rows.count, in: rows)
+            let space = list.space, store = list.store, gap = list.$gap
+            list.springFolder = nil
+            // Tabs go before the row's first tab, or first among the folder's tabs when the
+            // row is a subfolder (subfolders come before tabs).
+            let anchorTab: BrowserTab.ID? = target.before?.firstTabID
+                ?? (target.before == nil ? nil : space.tabs(in: target.folder).first?.id)
+            let anchorFolder: Folder.ID? = if case .folder(let folder, _) = target.before { folder.id } else { nil }
             return SidebarDrag.load(from: info) { drag in
                 withAnimation(.dropReflow) {
                     gap.wrappedValue = nil
                     switch drag {
-                    case .tab(let id): store.moveTabs([id], before: index)
+                    case .tab(let id): store.moveTabs([id], toFolder: target.folder, before: anchorTab)
                     case .split(let id):
-                        if let split = store.selectedSpace?.splits?.first(where: { $0.id == id }) {
-                            store.moveTabs(split.tabIDs, before: index)
+                        if let split = space.splits?.first(where: { $0.id == id }) {
+                            store.moveTabs(split.tabIDs, toFolder: target.folder, before: anchorTab)
                         }
-                    case .favorite(let id): store.unpinFavorite(id, toTabAt: index)
+                    case .folder(let id): store.moveFolder(id, to: target.folder, before: anchorFolder)
+                    case .favorite(let id):
+                        guard let favorite = space.favorites.first(where: { $0.id == id }) else { break }
+                        store.unpinFavorite(id, toTabAt: nil)
+                        if let tab = store.selectedSpace?.tabs.first(where: { $0.url.host() == favorite.url.host() }) {
+                            store.moveTabs([tab.id], toFolder: target.folder, before: anchorTab)
+                        }
                     case nil: break
                     }
                 }
@@ -574,15 +683,136 @@ private struct TabList: View {
     }
 }
 
+/// Indents a tab-list row by its folder depth, with a thin guide line per level.
+private struct Indented: ViewModifier {
+    let depth: Int
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, CGFloat(depth) * TabList.indent)
+            .overlay(alignment: .leading) {
+                if depth > 0 {
+                    ForEach(0..<depth, id: \.self) { level in
+                        Rectangle()
+                            .fill(.primary.opacity(0.12))
+                            .frame(width: 1)
+                            .padding(.vertical, -1)
+                            .offset(x: CGFloat(level) * TabList.indent + 17)
+                    }
+                }
+            }
+    }
+}
+
+/// A folder header: open or closed folder, its name (renamed in place), and a chevron on hover.
+private struct FolderRow: View {
+    let folder: Folder
+    let depth: Int
+    let space: Space
+    @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
+    @State private var hovering = false
+    @State private var draftName = ""
+    @State private var confirmsDelete = false
+    @FocusState private var nameFocused: Bool
+
+    private var isRenaming: Bool { store.renamingFolderID == folder.id }
+    private var tabCount: Int { space.tabIDs(under: folder.id).count }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
+                .frame(width: 16)
+                .foregroundStyle(.secondary)
+            if isRenaming {
+                TextField("Folder name", text: $draftName)
+                    .textFieldStyle(.plain)
+                    .focused($nameFocused)
+                    .onSubmit(commitRename)
+                    .onExitCommand { store.renamingFolderID = nil }
+                    .onAppear { draftName = folder.name }
+                    // After a beat, so a closing popover (the + menu) has given the window back
+                    // keyboard focus.
+                    .task {
+                        try? await Task.sleep(for: .milliseconds(150))
+                        nameFocused = true
+                    }
+            } else {
+                Text(folder.name).lineLimit(1)
+                    .onTapGesture(count: 2) { store.renamingFolderID = folder.id }
+            }
+            Spacer(minLength: 0)
+            if hovering && !isRenaming {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(folder.isExpanded ? 90 : 0))
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(hovering ? 0.06 : 0)))
+        .contentShape(.rect)
+        .onTapGesture { if !isRenaming { toggle() } }
+        .onHover { hovering = $0 }
+        .focusable(!isRenaming)
+        .focusEffectDisabled()
+        .onKeyPress(.leftArrow) { setExpanded(false); return .handled }
+        .onKeyPress(.rightArrow) { setExpanded(true); return .handled }
+        .contextMenu {
+            Button("Rename") { store.renamingFolderID = folder.id }
+            Button("New Subfolder") { store.addFolder(in: folder.id) }
+                .disabled(depth + 1 >= Folder.maxDepth)
+            Divider()
+            Button("Expand All") { withAnimation(.folderToggle) { store.setFoldersExpanded(true, under: folder.id) } }
+            Button("Collapse All") { withAnimation(.folderToggle) { store.setFoldersExpanded(false, under: folder.id) } }
+            Divider()
+            Button("Close All Tabs") {
+                for id in store.unloadFolder(folder.id) { pool.close(id) }
+            }
+            .disabled(tabCount == 0)
+            Button("Delete Folder…", role: .destructive) {
+                if tabCount == 0 { store.deleteFolder(folder.id, closingTabs: false) } else { confirmsDelete = true }
+            }
+        }
+        .confirmationDialog("Delete “\(folder.name)”?", isPresented: $confirmsDelete) {
+            Button("Close \(tabCount == 1 ? "1 Tab" : "\(tabCount) Tabs")", role: .destructive) {
+                for id in store.deleteFolder(folder.id, closingTabs: true) { pool.close(id) }
+            }
+            Button("Keep Tabs") { store.deleteFolder(folder.id, closingTabs: false) }
+        } message: {
+            Text("Its tabs can be closed, or kept by moving them out of the folder.")
+        }
+        .help(folder.name)
+    }
+
+    private func toggle() { setExpanded(!folder.isExpanded) }
+
+    private func setExpanded(_ expanded: Bool) {
+        withAnimation(.folderToggle) { store.setFolderExpanded(folder.id, expanded) }
+    }
+
+    private func commitRename() {
+        store.renameFolder(folder.id, to: draftName)
+        store.renamingFolderID = nil
+    }
+}
+
+extension Animation {
+    /// Folders opening and closing.
+    static let folderToggle = Animation.spring(duration: 0.2)
+}
+
 private struct TabRow: View {
     let tab: BrowserTab
     let isSelected: Bool
     let isMarked: Bool
     /// The marked tabs, when this one is among two or more of them.
-    let splitCandidates: [BrowserTab.ID]
+    let markedTabs: [BrowserTab.ID]
     let namespace: Namespace.ID
     let onSelect: () -> Void
-    let onSplit: () -> Void
+    /// The marked tabs were used by a menu command.
+    let onMarkedUsed: () -> Void
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
     @State private var hovering = false
@@ -592,13 +822,15 @@ private struct TabRow: View {
             FaviconView(url: tab.url, size: 16)
             Text(tab.title).lineLimit(1).fontWeight(isSelected ? .semibold : .regular)
             Spacer(minLength: 0)
-            if hovering {
+            if hovering && tab.isUnloaded != true {
                 Button { pool.close(tab.id); store.closeTab(tab.id) } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
                 }
                 .buttonStyle(.borderless)
             }
         }
+        // A folder tab whose page was closed stays, dimmed, until it's opened again.
+        .opacity(tab.isUnloaded == true ? 0.5 : 1)
         .padding(.horizontal, 10)
         .frame(height: 36)
         .background {
@@ -614,19 +846,49 @@ private struct TabRow: View {
         .onTapGesture(perform: onSelect)
         .onHover { hovering = $0 }
         .contextMenu {
-            if splitCandidates.count >= 2 {
-                Button("Open \(min(splitCandidates.count, Split.maxPanes)) Tabs in Split View") {
-                    store.makeSplit(splitCandidates)
-                    onSplit()
+            if markedTabs.count >= 2 {
+                Button("Open \(min(markedTabs.count, Split.maxPanes)) Tabs in Split View") {
+                    store.makeSplit(markedTabs)
+                    onMarkedUsed()
+                }
+                Button("New Folder with \(markedTabs.count) Tabs") {
+                    store.addFolder(tabs: markedTabs)
+                    onMarkedUsed()
                 }
             } else if let current = store.selectedTab?.id, current != tab.id {
                 Button("Add to Split View") { store.addToSplit(tab.id, beside: current) }
+            }
+            Menu("Add to Folder") {
+                ForEach(folderChoices, id: \.folder.id) { choice in
+                    Button(String(repeating: "    ", count: choice.depth) + choice.folder.name) {
+                        store.moveTabs(markedTabs.count >= 2 ? markedTabs : [tab.id], toFolder: choice.folder.id)
+                        onMarkedUsed()
+                    }
+                    .disabled(choice.folder.id == tab.folderID)
+                }
+                if !folderChoices.isEmpty { Divider() }
+                Button("New Folder") {
+                    store.addFolder(tabs: markedTabs.count >= 2 ? markedTabs : [tab.id])
+                    onMarkedUsed()
+                }
+            }
+            if tab.folderID != nil {
+                Button("Remove from Folder") { store.moveTabs([tab.id], toFolder: nil) }
             }
             Button("Add to Favorites") { store.addFavorite(from: tab) }
             Divider()
             Button("Close Tab") { pool.close(tab.id); store.closeTab(tab.id) }
         }
         .animation(.smooth(duration: 0.25), value: isSelected)
+    }
+
+    /// Every folder in the space, depth first, for the Add to Folder menu.
+    private var folderChoices: [(folder: Folder, depth: Int)] {
+        guard let space = store.selectedSpace else { return [] }
+        func walk(_ parent: Folder.ID?, _ depth: Int) -> [(folder: Folder, depth: Int)] {
+            space.subfolders(of: parent).flatMap { [($0, depth)] + walk($0.id, depth + 1) }
+        }
+        return walk(nil, 0)
     }
 }
 
@@ -791,10 +1053,7 @@ private struct NewMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             MenuRow(icon: "plus.square.on.square", title: "New Space") { run { store.isCreatingSpace = true } }
-            MenuRow(icon: "folder.badge.plus", title: "New Folder") {}.disabled(true)
-            Divider().padding(.vertical, 3)
-            MenuRow(icon: "scribble.variable", title: "New Easel") {}.disabled(true)
-            MenuRow(icon: "paintbrush.pointed", title: "New Boost") {}.disabled(true)
+            MenuRow(icon: "folder.badge.plus", title: "New Folder", shortcut: "⌥⌘N") { run { store.addFolder() } }
             Divider().padding(.vertical, 3)
             MenuRow(icon: "rectangle.split.2x1", title: "New Split", shortcut: "⌃⇧=") { run { store.startNewSplit() } }
             MenuRow(icon: "plus", title: "New Tab", shortcut: "⌘T") { run { store.isCommandBarOpen = true } }

@@ -62,6 +62,8 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("t")
             Button("Open Location") { store.isCommandBarOpen = true }
                 .keyboardShortcut("l")
+            Button("New Folder") { store.addFolder() }
+                .keyboardShortcut("n", modifiers: [.command, .option])
             Button("Close Tab") {
                 if let id = store.selectedTab?.id { pool.close(id); store.closeTab(id) }
             }

@@ -18,6 +18,8 @@ final class BrowserStore {
     var isCreatingSpace = false
     /// The tint picked in the Create a Space form, previewed on the window until it's created.
     var draftTint: SpaceTint?
+    /// The folder whose name is being edited in the tab list.
+    var renamingFolderID: Folder.ID?
 
     static let recentlyClosedLimit = 20
 
@@ -72,7 +74,11 @@ final class BrowserStore {
     func selectTab(_ id: BrowserTab.ID) {
         mutateSelectedSpace { space in
             space.selectedTabID = id
-            if let i = space.tabs.firstIndex(where: { $0.id == id }) { space.tabs[i].lastActive = .now }
+            if let i = space.tabs.firstIndex(where: { $0.id == id }) {
+                space.tabs[i].lastActive = .now
+                // Selecting an unloaded folder tab opens its page again.
+                space.tabs[i].isUnloaded = nil
+            }
         }
     }
 
@@ -89,6 +95,17 @@ final class BrowserStore {
     }
 
     func closeTab(_ id: BrowserTab.ID) {
+        // Like Arc, a folder's tab is kept: closing only unloads its page.
+        if selectedSpace?.tabs.first(where: { $0.id == id })?.folderID != nil, split(containing: id) == nil {
+            mutateSelectedSpace { space in
+                guard let i = space.tabs.firstIndex(where: { $0.id == id }) else { return }
+                space.tabs[i].isUnloaded = true
+                if space.selectedTabID == id {
+                    space.selectedTabID = space.tabs.first { $0.id != id && $0.isUnloaded != true }?.id
+                }
+            }
+            return
+        }
         // Closing a split's pane focuses another pane of that split.
         let otherPane = split(containing: id)?.tabIDs.first { $0 != id }
         mutateSelectedSpace { space in
@@ -135,6 +152,59 @@ final class BrowserStore {
         } else {
             openTab(favorite.url, title: favorite.title)
         }
+    }
+
+    // MARK: Folders
+
+    /// Adds a folder (in `parent`, holding `tabIDs`) and starts renaming it.
+    func addFolder(in parent: Folder.ID? = nil, tabs tabIDs: [BrowserTab.ID] = []) {
+        var added: Folder.ID?
+        mutateSelectedSpace { space in
+            added = space.addFolder(in: parent, tabs: tabIDs)
+            if let parent, added != nil { space.setExpanded(parent, true) }
+        }
+        renamingFolderID = added
+    }
+
+    func renameFolder(_ id: Folder.ID, to name: String) {
+        mutateSelectedSpace { $0.renameFolder(id, to: name) }
+    }
+
+    func setFolderExpanded(_ id: Folder.ID, _ expanded: Bool) {
+        mutateSelectedSpace { $0.setExpanded(id, expanded) }
+    }
+
+    func setFoldersExpanded(_ expanded: Bool, under id: Folder.ID?) {
+        mutateSelectedSpace { $0.setExpandedAll(expanded, under: id) }
+    }
+
+    func moveFolder(_ id: Folder.ID, to parent: Folder.ID?, before sibling: Folder.ID? = nil) {
+        mutateSelectedSpace { $0.moveFolder(id, to: parent, before: sibling) }
+    }
+
+    func moveTabs(_ ids: [BrowserTab.ID], toFolder folder: Folder.ID?, before anchor: BrowserTab.ID? = nil) {
+        mutateSelectedSpace { $0.moveTabs(ids, to: folder, before: anchor) }
+    }
+
+    /// Returns the tabs closed, so their pages can be released.
+    @discardableResult
+    func deleteFolder(_ id: Folder.ID, closingTabs: Bool) -> [BrowserTab.ID] {
+        var closed: [BrowserTab.ID] = []
+        mutateSelectedSpace { closed = $0.deleteFolder(id, closingTabs: closingTabs) }
+        return closed
+    }
+
+    /// Unloads every tab in the folder, keeping them in place. Returns those that were loaded.
+    @discardableResult
+    func unloadFolder(_ id: Folder.ID) -> [BrowserTab.ID] {
+        var unloaded: [BrowserTab.ID] = []
+        mutateSelectedSpace { space in
+            unloaded = space.unloadTabs(under: id)
+            if let selected = space.selectedTabID, unloaded.contains(selected) {
+                space.selectedTabID = space.tabs.first { $0.isUnloaded != true }?.id
+            }
+        }
+        return unloaded
     }
 
     // MARK: Split view
