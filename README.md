@@ -45,12 +45,19 @@ The first run creates an "Embark Local Dev" identity in its own keychain under
 "Always Allow" once after that; later rebuilds signed the same way are remembered. CI
 doesn't sign and isn't affected.
 
+### Tests
+
+```sh
+xcodebuild test -project Embark.xcodeproj -scheme EmbarkTests -destination 'platform=macOS'
+```
+
 ## Shortcuts
 
 | Action | Shortcut |
 | --- | --- |
 | Command bar / new tab | ⌘T or ⌘L |
 | Close tab | ⌘W |
+| New folder | ⌥⌘N |
 | Back / forward / reload | ⌘[ / ⌘] / ⌘R |
 | Add to favorites | ⌘D |
 | New split (pick the new pane in the command bar) | ⌃⇧= |

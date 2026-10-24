@@ -19,6 +19,11 @@ struct BrowserTab: Identifiable, Codable, Hashable {
     var title: String
     var url: URL
     var lastActive = Date.now
+    /// The folder the tab is in; nil for the space's loose tabs.
+    var folderID: Folder.ID?
+    /// A folder's tab whose page was closed: it stays in the folder, dimmed, until reopened.
+    /// Optional so older saved state loads.
+    var isUnloaded: Bool?
 }
 
 /// A space groups favorites and tabs under one profile and one tint.
@@ -36,6 +41,8 @@ struct Space: Identifiable, Codable, Hashable {
     var recentlyClosed: [BrowserTab]?
     /// Tabs shown side by side. Optional so older saved state loads.
     var splits: [Split]?
+    /// Folders in the tab list, siblings in this order. Optional so older saved state loads.
+    var folders: [Folder]?
 }
 
 /// Two to four tabs of a space shown side by side (or stacked) as one item in the tab list.

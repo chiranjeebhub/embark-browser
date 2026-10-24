@@ -83,3 +83,16 @@ targets:
         HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/cef"
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/Vendor/cef/build/libcef_dll_wrapper"
         OTHER_LDFLAGS: "-lcef_dll_wrapper"
+
+  # Unit tests for model logic. Builds only the model files, so it needs no app host and never
+  # touches the app's saved state. Run: xcodebuild test -scheme EmbarkTests
+  EmbarkTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+      - path: Embark/Models
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.embark.tests
+        GENERATE_INFOPLIST_FILE: YES
