@@ -558,7 +558,7 @@ private struct TabList: View {
     @ViewBuilder private func rowView(_ row: Row) -> some View {
         switch row {
         case .folder(let folder, let depth):
-            FolderRow(folder: folder, depth: depth, space: space)
+            FolderRow(folder: folder, depth: depth, space: space, isSpringTarget: springFolder == folder.id)
                 .onDrag { SidebarDrag.folder(folder.id).itemProvider(pool: pool) }
         case .tab(let tab, _, _):
             TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, isMarked: marked.contains(tab.id),
@@ -709,6 +709,7 @@ private struct FolderRow: View {
     let folder: Folder
     let depth: Int
     let space: Space
+    var isSpringTarget = false
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
     @State private var hovering = false
@@ -721,9 +722,10 @@ private struct FolderRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
-                .frame(width: 16)
+            FolderGlyph(isOpen: folder.isExpanded)
                 .foregroundStyle(.secondary)
+                // Dimmed while a drag hovering it is about to spring it open.
+                .opacity(isSpringTarget ? 0.45 : 1)
             if isRenaming {
                 TextField("Folder name", text: $draftName)
                     .textFieldStyle(.plain)
@@ -795,6 +797,56 @@ private struct FolderRow: View {
     private func commitRename() {
         store.renameFolder(folder.id, to: draftName)
         store.renamingFolderID = nil
+    }
+}
+
+/// Arc's folder icons: a closed folder outline, and an open one with its front flap tilted
+/// forward. SF Symbols has no open folder, so that one is drawn to match `folder`'s box,
+/// baseline and stroke.
+private struct FolderGlyph: View {
+    let isOpen: Bool
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "folder")
+                .font(.system(size: 15))
+                .opacity(isOpen ? 0 : 1)
+                .scaleEffect(isOpen ? 0.92 : 1)
+            OpenFolderShape()
+                .stroke(style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+                .frame(width: 16.5, height: 13.4)
+                .opacity(isOpen ? 1 : 0)
+                .scaleEffect(isOpen ? 1 : 0.92)
+        }
+        .frame(width: 18, height: 16)
+        .animation(.snappy(duration: 0.15), value: isOpen)
+    }
+}
+
+/// An open folder: the back with its tab, and the front flap tipped forward.
+private struct OpenFolderShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height) }
+        var path = Path()
+        // Back panel with the tab, ending where the flap covers it.
+        path.move(to: p(0.06, 0.93))
+        path.addLine(to: p(0.06, 0.16))
+        path.addQuadCurve(to: p(0.13, 0.06), control: p(0.06, 0.06))
+        path.addLine(to: p(0.36, 0.06))
+        path.addLine(to: p(0.45, 0.19))
+        path.addLine(to: p(0.84, 0.19))
+        path.addQuadCurve(to: p(0.90, 0.26), control: p(0.90, 0.19))
+        path.addLine(to: p(0.90, 0.40))
+        // Front flap, tipped forward.
+        path.move(to: p(0.06, 0.93))
+        path.addLine(to: p(0.22, 0.47))
+        path.addQuadCurve(to: p(0.28, 0.40), control: p(0.235, 0.40))
+        path.addLine(to: p(0.94, 0.40))
+        path.addQuadCurve(to: p(0.985, 0.47), control: p(1.0, 0.40))
+        path.addLine(to: p(0.85, 0.89))
+        path.addQuadCurve(to: p(0.79, 0.93), control: p(0.835, 0.93))
+        path.closeSubpath()
+        return path
     }
 }
 
