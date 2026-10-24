@@ -243,10 +243,10 @@ private struct ExtensionItemStyle: ButtonStyle {
     let resting: Double
 
     func makeBody(configuration: Configuration) -> some View {
-        Body(configuration: configuration, cornerRadius: cornerRadius, resting: resting)
+        Item(configuration: configuration, cornerRadius: cornerRadius, resting: resting)
     }
 
-    private struct Body: View {
+    private struct Item: View {
         let configuration: Configuration
         let cornerRadius: CGFloat
         let resting: Double
