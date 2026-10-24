@@ -154,6 +154,7 @@ struct BrowserWindow: View {
             .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
             .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
             .animation(.snappy(duration: 0.2), value: pageDropZone)
+            .onChange(of: store.dragEndCount) { pageDropZone = nil }
         } else {
             EmptySpaceView()
         }
