@@ -35,6 +35,20 @@ final class PagePool: BrowserPageDelegate {
         id.flatMap { pages[$0] }
     }
 
+    // MARK: Extensions
+
+    var supportsExtensions: Bool { engine.supportsExtensions }
+
+    func extensions(for profile: Profile) -> [InstalledExtension] { engine.extensions(for: profile) }
+
+    /// A page for an extension's popup. It belongs to no tab: the caller closes it when the
+    /// popup goes away, and links it opens become tabs.
+    func makeExtensionPopup(_ url: URL, profile: Profile) -> BrowserPage {
+        let page = engine.makePage(url: url, profile: profile)
+        page.delegate = self
+        return page
+    }
+
     /// Web views take drops themselves, which would hide the page area's own drop target while
     /// a sidebar item is dragged onto it. They stop taking drops until the mouse is released.
     func suspendPageDrops() {

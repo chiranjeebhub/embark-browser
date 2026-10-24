@@ -378,6 +378,18 @@ final class BrowserStore {
         spaces[i].icon = icon
     }
 
+    // MARK: Extensions
+
+    /// Pins an extension to the profile's extensions popover, after the ones already pinned,
+    /// or unpins it.
+    func setExtension(_ id: String, pinned: Bool, in profileID: Profile.ID) {
+        guard let i = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+        var ids = profiles[i].pinnedExtensionIDs ?? []
+        ids.removeAll { $0 == id }
+        if pinned { ids.append(id) }
+        profiles[i].pinnedExtensionIDs = ids
+    }
+
     // MARK: Persistence
 
     private func mutateSelectedSpace(_ body: (inout Space) -> Void) {

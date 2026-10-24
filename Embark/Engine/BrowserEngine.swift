@@ -5,6 +5,15 @@ import AppKit
 @MainActor
 protocol BrowserEngine: AnyObject {
     func makePage(url: URL, profile: Profile) -> BrowserPage
+    /// Whether the engine runs Chrome extensions; without them the extensions button is hidden.
+    var supportsExtensions: Bool { get }
+    /// The Chrome extensions installed in a profile.
+    func extensions(for profile: Profile) -> [InstalledExtension]
+}
+
+extension BrowserEngine {
+    var supportsExtensions: Bool { false }
+    func extensions(for profile: Profile) -> [InstalledExtension] { [] }
 }
 
 @MainActor

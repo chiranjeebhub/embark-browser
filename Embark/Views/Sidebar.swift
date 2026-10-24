@@ -61,10 +61,11 @@ struct Sidebar: View {
 /// One space's address bar, favorites and tabs.
 private struct SpaceContent: View {
     let space: Space
+    @Environment(BrowserStore.self) private var store
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            AddressPill(tab: space.tabs.first { $0.id == space.selectedTabID })
+            AddressPill(tab: space.tabs.first { $0.id == space.selectedTabID }, profile: store.profile(for: space))
             FavoritesGrid(favorites: space.favorites)
             Divider().padding(.horizontal, 8)
             TabList(space: space)
@@ -137,10 +138,12 @@ private struct NavigationRow: View {
     }
 }
 
-/// The current page's address, flat like Arc's: host only, with copy and page actions.
+/// The current page's address, flat like Arc's: host only, with copy, extensions and page actions.
 private struct AddressPill: View {
     /// The space's selected tab.
     let tab: BrowserTab?
+    /// The space's profile, whose extensions the puzzle button shows.
+    let profile: Profile?
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
     @Environment(\.colorScheme) private var colorScheme
@@ -174,6 +177,11 @@ private struct AddressPill: View {
                     Button { copy(url) } label: { Image(systemName: "link").font(.system(size: 13)) }
                         .help("Copy URL")
                 }
+            }
+            if let profile, pool.supportsExtensions {
+                ExtensionsButton(profile: profile)
+            }
+            if url != nil {
                 Button { showsPageInfo = true } label: {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 13))
                 }
