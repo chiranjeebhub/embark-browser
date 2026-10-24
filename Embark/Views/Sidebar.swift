@@ -64,7 +64,7 @@ private struct SpaceContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            AddressPill(tab: space.tabs.first { $0.id == space.selectedTabID })
+            AddressPill(tab: space.pageTab(space.selectedTabID))
             FavoritesGrid(favorites: space.favorites)
             Divider().padding(.horizontal, 8)
             TabList(space: space)
@@ -264,7 +264,27 @@ enum SidebarDrag: Equatable {
     @MainActor func itemProvider(pool: PagePool) -> NSItemProvider {
         Self.current = self
         pool.suspendPageDrops()
+        // A folder name being edited would take the drag's text if it landed there.
+        pool.store?.renamingFolderID = nil
+        Self.watchForEnd(store: pool.store)
         return NSItemProvider(object: token as NSString)
+    }
+
+    /// Clears the drag once the mouse is released, however the drag ended: dropped in the
+    /// sidebar, elsewhere, or cancelled. Drop targets clear leftover placeholders on this.
+    @MainActor private static func watchForEnd(store: BrowserStore?) {
+        Task {
+            while NSEvent.pressedMouseButtons != 0 { try? await Task.sleep(for: .milliseconds(100)) }
+            // Let a drop's own handling finish first.
+            try? await Task.sleep(for: .milliseconds(300))
+            current = nil
+            store?.dragEndCount += 1
+        }
+    }
+
+    /// Removes drag tokens from text, in case one landed in a text field.
+    static func strippingTokens(_ text: String) -> String {
+        text.replacing(/embark-(tab|favorite|split|folder):[0-9A-Fa-f-]{36}/, with: "")
     }
 
     /// Reads the dragged string, then runs `apply` on the main actor with the item it names
@@ -358,22 +378,36 @@ private struct FavoritesGrid: View {
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onDrop(of: [.utf8PlainText], delegate: DropHandler(grid: self))
+        .onChange(of: store.dragEndCount) { withAnimation(.dropReflow) { placeholder = nil } }
         .animation(.dropReflow, value: slots.map(\.id))
     }
 
     private func tile(_ favorite: Favorite) -> some View {
-        Button { store.openFavorite(favorite) } label: {
+        // A favorite is its own tab: selecting it shows its own page and highlights the tile.
+        let isSelected = favorite.tab.map { $0.id == store.selectedSpace?.selectedTabID } ?? false
+        return Button { store.selectFavorite(favorite.id) } label: {
             FaviconView(url: favorite.url, size: 22)
+                .opacity(favorite.tab?.isUnloaded == true ? 0.5 : 1)
                 .frame(maxWidth: .infinity, minHeight: Self.tileHeight)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
-        .help(favorite.title)
+        .glassEffect(isSelected ? .regular.tint(.white.opacity(0.45)).interactive() : .regular.interactive(),
+                     in: .rect(cornerRadius: 12))
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.7), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+        }
+        .help(favorite.tab?.title ?? favorite.title)
         .onDrag { SidebarDrag.favorite(favorite.id).itemProvider(pool: pool) }
         .contextMenu {
-            Button("Remove from Favorites", role: .destructive) { store.removeFavorite(favorite.id) }
+            Button("Remove from Favorites", role: .destructive) {
+                if let page = store.removeFavorite(favorite.id) { pool.close(page) }
+            }
         }
+        .animation(.smooth(duration: 0.2), value: isSelected)
     }
 
     /// The insertion point nearest the pointer: between tiles, row by row.
@@ -436,6 +470,8 @@ private struct TabList: View {
     @State private var marked: [BrowserTab.ID] = []
     /// The collapsed folder a drag is hovering, and when it started, to spring it open.
     @State private var springFolder: Folder.ID?
+    /// The folder row a drag is over: dropping there puts the item into that folder, last.
+    @State private var dropFolder: Folder.ID?
 
     private static let headerHeight: CGFloat = 34
     private static let rowHeight: CGFloat = 36
@@ -553,12 +589,20 @@ private struct TabList: View {
         .scrollIndicators(.never)
         .animation(.dropReflow, value: rows.map(\.id))
         .onChange(of: space.id) { marked = [] }
+        .onChange(of: store.dragEndCount) {
+            withAnimation(.dropReflow) {
+                gap = nil
+                dropFolder = nil
+                springFolder = nil
+            }
+        }
     }
 
     @ViewBuilder private func rowView(_ row: Row) -> some View {
         switch row {
         case .folder(let folder, let depth):
-            FolderRow(folder: folder, depth: depth, space: space, isSpringTarget: springFolder == folder.id)
+            FolderRow(folder: folder, depth: depth, space: space, isSpringTarget: springFolder == folder.id,
+                      isDropTarget: dropFolder == folder.id)
                 .onDrag { SidebarDrag.folder(folder.id).itemProvider(pool: pool) }
         case .tab(let tab, _, _):
             TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, isMarked: marked.contains(tab.id),
@@ -611,6 +655,21 @@ private struct TabList: View {
         return min(max(index, 0), staying.count)
     }
 
+    /// The folder whose row's middle half is under the pointer.
+    private func folderUnderPointer(_ point: CGPoint) -> Folder? {
+        let y = point.y - Self.headerHeight - Self.spacing
+        let pitch = Self.rowHeight + Self.spacing
+        let rows = staying
+        let index = Int(floor(y / pitch))
+        guard rows.indices.contains(index), case .folder(let folder, _) = rows[index] else { return nil }
+        // Rows shift once a gap opens, so this is measured against the rows without one.
+        let within = y - CGFloat(index) * pitch
+        guard within > Self.rowHeight * 0.25, within < Self.rowHeight * 0.75 else { return nil }
+        // A folder can't go into itself.
+        if case .folder(let dragged) = SidebarDrag.current, space.folderAndDescendants(dragged).contains(folder.id) { return nil }
+        return folder
+    }
+
     /// The row under the pointer, for springing folders open.
     private func row(at point: CGPoint) -> Row? {
         let y = point.y - Self.headerHeight - Self.spacing
@@ -625,6 +684,19 @@ private struct TabList: View {
         func validateDrop(info: DropInfo) -> Bool { SidebarDrag.current != nil }
 
         func dropUpdated(info: DropInfo) -> DropProposal? {
+            // Over the middle of a folder row, the drop goes into the folder: highlight it
+            // instead of opening a gap.
+            if let folder = list.folderUnderPointer(info.location) {
+                if list.dropFolder != folder.id || list.gap != nil {
+                    withAnimation(.dropReflow) {
+                        list.dropFolder = folder.id
+                        list.gap = nil
+                    }
+                }
+                springOpen(.folder(folder, depth: 0))
+                return DropProposal(operation: .move)
+            }
+            list.dropFolder = nil
             let index = list.dropIndex(at: info.location)
             if list.gap != index { withAnimation(.dropReflow) { list.gap = index } }
             springOpen(list.row(at: info.location))
@@ -645,17 +717,24 @@ private struct TabList: View {
 
         func dropExited(info: DropInfo) {
             list.springFolder = nil
-            withAnimation(.dropReflow) { list.gap = nil }
+            withAnimation(.dropReflow) {
+                list.gap = nil
+                list.dropFolder = nil
+            }
         }
 
         func performDrop(info: DropInfo) -> Bool {
             let rows = list.staying
-            let target = list.dropTarget(at: list.gap ?? rows.count, in: rows)
+            let intoFolder = list.dropFolder
+            var target = list.dropTarget(at: list.gap ?? rows.count, in: rows)
+            if let intoFolder { target = (intoFolder, nil, 0) }
+            list.dropFolder = nil
             let space = list.space, store = list.store, gap = list.$gap
             list.springFolder = nil
             // Tabs go before the row's first tab, or first among the folder's tabs when the
             // row is a subfolder (subfolders come before tabs).
-            let anchorTab: BrowserTab.ID? = target.before?.firstTabID
+            // Dropped on a folder row: last in that folder.
+            let anchorTab: BrowserTab.ID? = intoFolder != nil ? nil : target.before?.firstTabID
                 ?? (target.before == nil ? nil : space.tabs(in: target.folder).first?.id)
             let anchorFolder: Folder.ID? = if case .folder(let folder, _) = target.before { folder.id } else { nil }
             return SidebarDrag.load(from: info) { drag in
@@ -669,11 +748,7 @@ private struct TabList: View {
                         }
                     case .folder(let id): store.moveFolder(id, to: target.folder, before: anchorFolder)
                     case .favorite(let id):
-                        guard let favorite = space.favorites.first(where: { $0.id == id }) else { break }
-                        store.unpinFavorite(id, toTabAt: nil)
-                        if let tab = store.selectedSpace?.tabs.first(where: { $0.url.host() == favorite.url.host() }) {
-                            store.moveTabs([tab.id], toFolder: target.folder, before: anchorTab)
-                        }
+                        store.unpinFavorite(id, toFolder: target.folder, before: anchorTab)
                     case nil: break
                     }
                 }
@@ -710,6 +785,8 @@ private struct FolderRow: View {
     let depth: Int
     let space: Space
     var isSpringTarget = false
+    /// A drag over the row would drop into this folder.
+    var isDropTarget = false
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
     @State private var hovering = false
@@ -728,6 +805,11 @@ private struct FolderRow: View {
                 .opacity(isSpringTarget ? 0.45 : 1)
             if isRenaming {
                 TextField("Folder name", text: $draftName)
+                    // Never keep a drag's payload if one is dropped into the field.
+                    .onChange(of: draftName) {
+                        let clean = SidebarDrag.strippingTokens(draftName)
+                        if clean != draftName { draftName = clean }
+                    }
                     .textFieldStyle(.plain)
                     .focused($nameFocused)
                     .onSubmit(commitRename)
@@ -753,7 +835,14 @@ private struct FolderRow: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
-        .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(hovering ? 0.06 : 0)))
+        .background {
+            if isDropTarget {
+                RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.22))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1.5))
+            } else {
+                RoundedRectangle(cornerRadius: 10).fill(.white.opacity(hovering ? 0.06 : 0))
+            }
+        }
         .contentShape(.rect)
         .onTapGesture { if !isRenaming { toggle() } }
         .onHover { hovering = $0 }
@@ -795,7 +884,7 @@ private struct FolderRow: View {
     }
 
     private func commitRename() {
-        store.renameFolder(folder.id, to: draftName)
+        store.renameFolder(folder.id, to: SidebarDrag.strippingTokens(draftName))
         store.renamingFolderID = nil
     }
 }

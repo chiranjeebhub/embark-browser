@@ -107,7 +107,7 @@ struct CommandBar: View {
         let splitTarget = store.pendingSplitTabID
         switch all[index] {
         case .tab(let tab): store.selectTab(tab.id)
-        case .favorite(let fav): store.openFavorite(fav)
+        case .favorite(let fav): store.selectFavorite(fav.id)
         case .go(let url): store.openTab(url)
         case .search(let q):
             var components = URLComponents(string: "https://www.google.com/search")!

@@ -8,6 +8,9 @@ final class BrowserStore {
     var spaces: [Space] = [] { didSet { save() } }
     var selectedSpaceID: Space.ID? { didSet { save() } }
     var isCommandBarOpen = false
+    /// Bumped when a sidebar drag ends, however it ends, so drop targets clear leftover
+    /// placeholders and highlights.
+    var dragEndCount = 0
     /// How far a two-finger swipe has moved the sidebar, as a fraction of its width:
     /// positive reveals the previous space, negative the next one.
     var swipeProgress: CGFloat = 0
@@ -48,9 +51,15 @@ final class BrowserStore {
         }
     }
 
+    /// The page on screen: a tab, or a favorite's own page.
     var selectedTab: BrowserTab? {
         guard let space = selectedSpace else { return nil }
-        return space.tabs.first { $0.id == space.selectedTabID }
+        return space.pageTab(space.selectedTabID)
+    }
+
+    /// The selected favorite, when a favorite's page is on screen.
+    var selectedFavorite: Favorite? {
+        selectedSpace.flatMap { $0.favorite(withPage: $0.selectedTabID) }
     }
 
     func profile(for space: Space) -> Profile? {
@@ -72,6 +81,7 @@ final class BrowserStore {
     }
 
     func selectTab(_ id: BrowserTab.ID) {
+        if let favorite = selectedSpace?.favorite(withPage: id) { selectFavorite(favorite.id); return }
         mutateSelectedSpace { space in
             space.selectedTabID = id
             if let i = space.tabs.firstIndex(where: { $0.id == id }) {
@@ -95,6 +105,11 @@ final class BrowserStore {
     }
 
     func closeTab(_ id: BrowserTab.ID) {
+        // A favorite's page only unloads; the favorite stays.
+        if selectedSpace?.favorite(withPage: id) != nil {
+            mutateSelectedSpace { $0.unloadFavoritePage(id) }
+            return
+        }
         // Like Arc, a folder's tab is kept: closing only unloads its page.
         if selectedSpace?.tabs.first(where: { $0.id == id })?.folderID != nil, split(containing: id) == nil {
             mutateSelectedSpace { space in
@@ -128,30 +143,33 @@ final class BrowserStore {
 
 
     func updateTab(_ id: BrowserTab.ID, title: String?, url: URL?) {
-        for s in spaces.indices {
-            guard let t = spaces[s].tabs.firstIndex(where: { $0.id == id }) else { continue }
-            if let title, !title.isEmpty { spaces[s].tabs[t].title = title }
-            if let url { spaces[s].tabs[t].url = url }
+        for s in spaces.indices where spaces[s].pageTab(id) != nil {
+            spaces[s].updatePage(id, title: title, url: url)
         }
     }
 
     // MARK: Favorites
 
+    /// Pins the tab: it moves into the favorites, page and all.
     func addFavorite(from tab: BrowserTab) {
-        mutateSelectedSpace { $0.favorites.append(Favorite(title: tab.title, url: tab.url)) }
+        pinTab(tab.id, at: nil)
     }
 
-    func removeFavorite(_ id: Favorite.ID) {
-        mutateSelectedSpace { $0.favorites.removeAll { $0.id == id } }
-    }
-
-    /// Opening a favorite reuses its tab if one is already open, so favorites behave like apps.
-    func openFavorite(_ favorite: Favorite) {
-        if let existing = selectedSpace?.tabs.first(where: { $0.url.host() == favorite.url.host() }) {
-            selectTab(existing.id)
-        } else {
-            openTab(favorite.url, title: favorite.title)
+    /// Removes a favorite. Returns its page's tab id, if it had one, so the page can be closed.
+    @discardableResult
+    func removeFavorite(_ id: Favorite.ID) -> BrowserTab.ID? {
+        var page: BrowserTab.ID?
+        mutateSelectedSpace { space in
+            page = space.favorites.first { $0.id == id }?.tab?.id
+            space.favorites.removeAll { $0.id == id }
+            if let page, space.selectedTabID == page { space.selectedTabID = space.tabs.first?.id }
         }
+        return page
+    }
+
+    /// Shows the favorite's own page (made on first use). The tab list is left alone.
+    func selectFavorite(_ id: Favorite.ID) {
+        mutateSelectedSpace { $0.selectFavorite(id) }
     }
 
     // MARK: Folders
@@ -228,7 +246,9 @@ final class BrowserStore {
     /// Adds a tab as a pane next to `target` (after it, or before it with `before`), making a
     /// split if `target` isn't in one. `isVertical` sets a new split's axis.
     func addToSplit(_ tabID: BrowserTab.ID, beside target: BrowserTab.ID, before: Bool = false, isVertical: Bool? = nil) {
-        guard tabID != target else { return }
+        // Splits are made of the tab list's tabs, not favorites' pages.
+        guard tabID != target, let tabs = selectedSpace?.tabs,
+              tabs.contains(where: { $0.id == tabID }), tabs.contains(where: { $0.id == target }) else { return }
         if let split = split(containing: target), !split.tabIDs.contains(tabID), split.tabIDs.count >= Split.maxPanes { return }
         removeFromSplit(tabID)
         if let split = split(containing: target) {
@@ -303,29 +323,24 @@ final class BrowserStore {
 
     // MARK: Dragging between tabs and favorites
 
-    /// Pins a tab as a favorite before `index` (or at the end). The tab stays open.
+    /// Pins a tab as a favorite before `index` (or at the end). The tab itself moves, so its
+    /// page carries on without reloading.
     func pinTab(_ id: BrowserTab.ID, at index: Int?) {
-        mutateSelectedSpace { space in
-            guard let tab = space.tabs.first(where: { $0.id == id }),
-                  !space.favorites.contains(where: { $0.url == tab.url }) else { return }
-            space.favorites.insert(Favorite(title: tab.title, url: tab.url), at: Self.clamp(index, space.favorites.count))
-        }
+        mutateSelectedSpace { $0.pinTab(id, at: index) }
     }
 
-    /// Unpins a favorite, keeping it as a tab before `index`: its open tab moves there, or one is opened.
-    func unpinFavorite(_ id: Favorite.ID, toTabAt index: Int?) {
-        mutateSelectedSpace { space in
-            guard let favorite = space.favorites.first(where: { $0.id == id }) else { return }
-            space.favorites.removeAll { $0.id == id }
-            if let i = space.tabs.firstIndex(where: { $0.url.host() == favorite.url.host() }) {
-                let tab = space.tabs.remove(at: i)
-                space.tabs.insert(tab, at: Self.clamp(index.map { $0 > i ? $0 - 1 : $0 }, space.tabs.count))
-            } else {
-                let tab = BrowserTab(title: favorite.title, url: favorite.url)
-                space.tabs.insert(tab, at: Self.clamp(index, space.tabs.count))
-                space.selectedTabID = tab.id
-            }
-        }
+    /// Unpins a favorite: it goes back to the tab list as a tab, page and all, before `index`.
+    @discardableResult
+    func unpinFavorite(_ id: Favorite.ID, toTabAt index: Int?) -> BrowserTab.ID? {
+        var tabID: BrowserTab.ID?
+        mutateSelectedSpace { tabID = $0.unpinFavorite(id, toTabAt: index) }
+        return tabID
+    }
+
+    /// Unpins a favorite into a folder (nil for loose tabs), before `anchor` or last.
+    func unpinFavorite(_ id: Favorite.ID, toFolder folder: Folder.ID?, before anchor: BrowserTab.ID?) {
+        guard let tabID = unpinFavorite(id, toTabAt: nil) else { return }
+        moveTabs([tabID], toFolder: folder, before: anchor)
     }
 
     func moveFavorite(_ id: Favorite.ID, before index: Int?) {

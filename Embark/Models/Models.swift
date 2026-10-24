@@ -6,11 +6,16 @@ struct Profile: Identifiable, Codable, Hashable {
     var name: String
 }
 
-/// A site pinned to a space's favorites grid.
+/// A site pinned to a space's favorites grid. Like Arc, a favorite is its own tab: it has its
+/// own page, separate from the tab list.
 struct Favorite: Identifiable, Codable, Hashable {
     var id = UUID()
     var title: String
+    /// Where the favorite starts. Its page may have navigated elsewhere since.
     var url: URL
+    /// The favorite's page, made the first time it's opened (or brought along when a tab is
+    /// pinned). Optional so older saved state loads.
+    var tab: BrowserTab?
 }
 
 /// An open page in a space's tab list.
