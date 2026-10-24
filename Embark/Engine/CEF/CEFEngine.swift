@@ -7,8 +7,18 @@ final class CEFEngine: BrowserEngine {
     static let cacheRoot = BrowserStore.supportDirectory.appending(path: "Chromium", directoryHint: .isDirectory)
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
-        let directory = Self.cacheRoot.appending(path: "Profile-\(profile.id.uuidString)", directoryHint: .isDirectory)
-        return CEFPage(browser: EMBCEFBrowser(url: url, profileDirectory: directory))
+        CEFPage(browser: EMBCEFBrowser(url: url, profileDirectory: directory(for: profile)))
+    }
+
+    var supportsExtensions: Bool { true }
+
+    func extensions(for profile: Profile) -> [InstalledExtension] {
+        ExtensionCatalog.extensions(inProfile: directory(for: profile))
+    }
+
+    /// Chromium's profile folder: cookies, logins and extensions, apart from other profiles.
+    private func directory(for profile: Profile) -> URL {
+        Self.cacheRoot.appending(path: "Profile-\(profile.id.uuidString)", directoryHint: .isDirectory)
     }
 }
 

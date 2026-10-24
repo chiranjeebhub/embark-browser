@@ -4,6 +4,9 @@ import SwiftUI
 struct Profile: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
+    /// Extensions shown as tiles at the top of the extensions popover, in order. Optional so
+    /// older saved state loads.
+    var pinnedExtensionIDs: [String]?
 }
 
 /// A site pinned to a space's favorites grid. Like Arc, a favorite is its own tab: it has its

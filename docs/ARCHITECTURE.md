@@ -54,6 +54,11 @@ How the pieces fit:
   links against it. `scripts/embed-cef.sh` copies it into `Contents/Frameworks`.
 - `EmbarkHelper` is built once from `HelperMain.mm` and copied by the same script as
   `Embark Helper`, `(GPU)`, `(Renderer)`, `(Plugin)` and `(Alerts)`.
+- Extensions are Chromium's own, installed per profile from the Chrome Web Store or
+  chrome://extensions. CEF has no API that lists them, so `Models/ExtensionCatalog.swift`
+  reads the profile's `Preferences` files and each extension's manifest. The puzzle button
+  in the address bar shows them; a popup is the extension's `chrome-extension://` page in
+  its own CEF browser inside the popover.
 - The Chromium sandbox is off for now (`no_sandbox`). Turning it on means linking
   `cef_sandbox` into the helpers.
 
