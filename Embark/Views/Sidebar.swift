@@ -1104,7 +1104,7 @@ private struct BottomBar: View {
                 .help("Library")
                 .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
             Spacer(minLength: 8)
-            HStack(spacing: 16) {
+            HStack(spacing: 8) {
                 // The active marker moves across during a swipe.
                 let progress = store.swipeProgress
                 let neighbor = store.neighborSpace(towardProgress: progress)?.id
@@ -1126,7 +1126,7 @@ private struct BottomBar: View {
     }
 }
 
-/// A space as a plain glyph: its symbol, or its first letter. The active one is tinted.
+/// A space as a plain glyph: its symbol, or its first letter. The active one is highlighted.
 private struct SpaceGlyph: View {
     let space: Space
     /// 1 for the active space; between 0 and 1 while a swipe moves to or from it.
@@ -1141,10 +1141,16 @@ private struct SpaceGlyph: View {
     var body: some View {
         Button { store.selectSpace(space.id) } label: {
             ZStack {
-                glyph.foregroundStyle(.primary.opacity(hovering ? 0.7 : 0.35)).opacity(1 - activeAmount)
-                glyph.foregroundStyle(space.accent).opacity(activeAmount)
+                // Like Arc: the active space sits on a soft glass tile in full strength; the
+                // others are dimmed. The theme color alone was too close to the sidebar's tint.
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.primary.opacity(0.16))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+                    .opacity(activeAmount)
+                glyph.foregroundStyle(.primary.opacity(hovering ? 0.65 : 0.35)).opacity(1 - activeAmount)
+                glyph.foregroundStyle(.primary).opacity(activeAmount)
             }
-            .frame(width: 22, height: 24)
+            .frame(width: 30, height: 28)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
