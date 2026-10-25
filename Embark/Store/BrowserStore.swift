@@ -328,6 +328,27 @@ final class BrowserStore {
         selectTab(split.tabIDs[(i + offset + split.tabIDs.count) % split.tabIDs.count])
     }
 
+    /// ⌃Tab and ⌃⇧Tab: the next or previous open tab in the tab list, wrapping around.
+    func selectTab(offset: Int) {
+        guard let space = selectedSpace else { return }
+        let open = space.tabs.filter { $0.isUnloaded != true }
+        guard !open.isEmpty else { return }
+        let i = open.firstIndex { $0.id == space.selectedTabID } ?? (offset > 0 ? -1 : 0)
+        selectTab(open[(i + offset + open.count) % open.count].id)
+    }
+
+    /// ⌘1 to ⌘8 pick that tab in the list; ⌘9 picks the last one, as in Chrome.
+    func selectTab(number: Int) {
+        guard let tabs = selectedSpace?.tabs, !tabs.isEmpty else { return }
+        let index = number == 9 ? tabs.count - 1 : number - 1
+        if tabs.indices.contains(index) { selectTab(tabs[index].id) }
+    }
+
+    /// ⌘⇧T: the tab closed most recently in this space.
+    func reopenLastClosedTab() {
+        if let last = selectedSpace?.recentlyClosed?.last { reopenClosedTab(last.id) }
+    }
+
     /// New Split: the next tab picked in the command bar opens beside the current one.
     func startNewSplit() {
         guard let current = selectedTab?.id else { isCommandBarOpen = true; return }

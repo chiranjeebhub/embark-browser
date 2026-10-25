@@ -54,6 +54,12 @@ protocol BrowserPage: AnyObject {
     func stopFinding()
     /// Takes a full-screen video or element back into the page.
     func exitFullscreen()
+
+    func stopLoading()
+    /// 1 is 100%.
+    var zoomFactor: Double { get set }
+    func print()
+    func showDevTools()
 }
 
 extension BrowserPage {
@@ -67,6 +73,13 @@ extension BrowserPage {
     func find(_ text: String, forward: Bool, findNext: Bool) {}
     func stopFinding() {}
     func exitFullscreen() {}
+    func stopLoading() {}
+    var zoomFactor: Double {
+        get { 1 }
+        set {}
+    }
+    func print() {}
+    func showDevTools() {}
 }
 
 @MainActor
@@ -78,6 +91,8 @@ protocol BrowserPageDelegate: AnyObject {
     /// `active` counts from 1; 0 when no match is selected.
     func page(_ page: BrowserPage, didFindMatches count: Int, active: Int)
     func page(_ page: BrowserPage, didChangeFullscreen fullscreen: Bool)
+    /// `progress` runs from 0 to 1 while loading.
+    func page(_ page: BrowserPage, didChangeLoading isLoading: Bool, progress: Double)
 }
 
 /// Per-site permissions shown in page info. Raw values match EMBSitePermission.

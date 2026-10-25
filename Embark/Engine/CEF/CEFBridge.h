@@ -45,6 +45,8 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
 - (void)cefBrowser:(EMBCEFBrowser *)browser dismissedPermissionRequest:(uint64_t)requestID;
 /// Matches for the current find; `active` counts from 1, 0 when none is selected.
 - (void)cefBrowser:(EMBCEFBrowser *)browser didFindMatches:(NSInteger)count active:(NSInteger)active NS_SWIFT_NAME(cefBrowser(_:didFindMatches:active:));
+/// The page started or stopped loading; `progress` runs from 0 to 1.
+- (void)cefBrowser:(EMBCEFBrowser *)browser didChangeLoading:(BOOL)isLoading progress:(double)progress NS_SWIFT_NAME(cefBrowser(_:didChangeLoading:progress:));
 /// A video or other element went full screen inside the page, or came out of it.
 - (void)cefBrowser:(EMBCEFBrowser *)browser didChangeFullscreen:(BOOL)fullscreen NS_SWIFT_NAME(cefBrowser(_:didChangeFullscreen:));
 @end
@@ -108,6 +110,13 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 - (void)stopFinding;
 /// Takes a full-screen element back into the page.
 - (void)exitFullscreen;
+
+@property (nonatomic, readonly) BOOL isLoading;
+- (void)stopLoading;
+/// 1 is 100%. Chromium keeps it for the page until it navigates to another site.
+@property (nonatomic) double zoomFactor;
+- (void)print;
+- (void)showDevTools;
 
 /// The visible page came over a secure connection with a valid certificate.
 @property (nonatomic, readonly) BOOL isSecure;

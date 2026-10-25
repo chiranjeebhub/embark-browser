@@ -207,6 +207,20 @@ struct BrowserWindow: View {
             }
             .animation(.snappy(duration: 0.18), value: pool.findTabID)
             .overlay(alignment: .top) {
+                if let progress = pool.loadingProgress[tab.id] { LoadingBar(progress: progress) }
+            }
+            .overlay(alignment: .top) {
+                if let notice = pool.zoomNotice, visibleTabIDs.contains(notice.tabID) {
+                    Text(Zoom.percent(notice.factor))
+                        .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                        .padding(.horizontal, 14).frame(height: 30)
+                        .glassEffect(.regular, in: .capsule)
+                        .padding(.top, 14)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: pool.zoomNotice?.count)
+            .overlay(alignment: .top) {
                 // Permission prompts for the pages on screen, one at a time.
                 let visible = visibleTabIDs
                 if let request = pool.permissionRequests.first(where: { visible.contains($0.tabID) }) {
@@ -325,7 +339,23 @@ private struct PageDropHandler: DropDelegate {
     @MainActor static var pageSize = CGSize(width: 1, height: 1)
 }
 
-/// Shows or hides the window's traffic lights.
+/// A thin bar along the page's top edge while it loads.
+private struct LoadingBar: View {
+    let progress: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: max(24, geo.size.width * progress), height: 2.5)
+                .animation(.smooth(duration: 0.25), value: progress)
+        }
+        .frame(height: 2.5)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+}
+
 /// Shows or hides the window's traffic lights.
 private struct WindowButtons: NSViewRepresentable {
     let isVisible: Bool

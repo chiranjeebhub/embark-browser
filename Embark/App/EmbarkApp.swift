@@ -126,6 +126,26 @@ struct BrowserCommands: Commands {
                 if let id = store.selectedTab?.id { pool.close(id); store.closeTab(id) }
             }
             .keyboardShortcut("w")
+            Button("Reopen Closed Tab") { store.reopenLastClosedTab() }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(store.selectedSpace?.recentlyClosed?.isEmpty ?? true)
+            Divider()
+            Button("Print…") { selectedPage?.print() }
+                .keyboardShortcut("p")
+                .disabled(selectedPage == nil)
+        }
+        CommandGroup(after: .toolbar) {
+            // ⌘= rather than ⌘+, so it works without Shift, as in Chrome.
+            Button("Zoom In") { pool.zoom(store.selectedTab?.id, Zoom.zoomedIn) }
+                .keyboardShortcut("=")
+            Button("Zoom Out") { pool.zoom(store.selectedTab?.id, Zoom.zoomedOut) }
+                .keyboardShortcut("-")
+            Button("Actual Size") { pool.zoom(store.selectedTab?.id) { _ in 1 } }
+                .keyboardShortcut("0")
+            Divider()
+            Button("Developer Tools") { selectedPage?.showDevTools() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(selectedPage == nil)
         }
         CommandGroup(after: .textEditing) {
             Divider()
@@ -143,6 +163,23 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("]")
             Button("Reload") { pool.existingPage(for: store.selectedTab?.id)?.reload() }
                 .keyboardShortcut("r")
+            Button("Stop") { selectedPage?.stopLoading() }
+                .keyboardShortcut(".")
+            Button("Copy URL") {
+                guard let url = store.selectedTab?.url else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            Divider()
+            Button("Next Tab") { store.selectTab(offset: 1) }
+                .keyboardShortcut(.tab, modifiers: .control)
+            Button("Previous Tab") { store.selectTab(offset: -1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+            ForEach(1...9, id: \.self) { number in
+                Button(number == 9 ? "Last Tab" : "Tab \(number)") { store.selectTab(number: number) }
+                    .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
+            }
             Divider()
             Button("Add to Favorites") { if let tab = store.selectedTab { store.addFavorite(from: tab) } }
                 .keyboardShortcut("d")
@@ -176,6 +213,8 @@ struct BrowserCommands: Commands {
             .keyboardShortcut("b")
         }
     }
+
+    private var selectedPage: BrowserPage? { pool.existingPage(for: store.selectedTab?.id) }
 
     /// ⌘G opens the find bar with the last search if it's closed.
     private func findAgain(forward: Bool) {

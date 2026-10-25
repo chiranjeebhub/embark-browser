@@ -60,6 +60,13 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
     func find(_ text: String, forward: Bool, findNext: Bool) { browser.find(text, forward: forward, findNext: findNext) }
     func stopFinding() { browser.stopFinding() }
     func exitFullscreen() { browser.exitFullscreen() }
+    func stopLoading() { browser.stopLoading() }
+    var zoomFactor: Double {
+        get { browser.zoomFactor }
+        set { browser.zoomFactor = newValue }
+    }
+    func print() { browser.print() }
+    func showDevTools() { browser.showDevTools() }
 
     nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didChangeTitle title: String?) {
         MainActor.assumeIsolated { self.title = title; report() }
@@ -98,6 +105,10 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
 
     nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didChangeFullscreen fullscreen: Bool) {
         MainActor.assumeIsolated { delegate?.page(self, didChangeFullscreen: fullscreen) }
+    }
+
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didChangeLoading isLoading: Bool, progress: Double) {
+        MainActor.assumeIsolated { delegate?.page(self, didChangeLoading: isLoading, progress: progress) }
     }
 
     // MARK: Page info

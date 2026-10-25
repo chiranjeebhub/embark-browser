@@ -35,6 +35,14 @@ final class PagePool: BrowserPageDelegate {
     @ObservationIgnored var lastFindText = ""
     /// Bumped by ⌘F while the bar is already open, to focus its field again.
     private(set) var findFocusRequest = 0
+    /// Load progress, 0 to 1, of the tabs that are loading.
+    private(set) var loadingProgress: [BrowserTab.ID: Double] = [:]
+    /// Zoom picked for each site, kept across launches.
+    @ObservationIgnored private var siteZoom: [String: Double] =
+        UserDefaults.standard.dictionary(forKey: "SiteZoom") as? [String: Double] ?? [:]
+    @ObservationIgnored private var zoomedHosts: [BrowserTab.ID: String] = [:]
+    /// Shown briefly over the page after the zoom changes.
+    private(set) var zoomNotice: (tabID: BrowserTab.ID, factor: Double, count: Int)?
     /// The tab showing a video (or other element) full screen.
     private(set) var fullscreenTabID: BrowserTab.ID?
 
@@ -136,6 +144,32 @@ final class PagePool: BrowserPageDelegate {
         findResult = nil
     }
 
+    // MARK: Zoom
+
+    func zoom(_ id: BrowserTab.ID?, _ change: (Double) -> Double) {
+        guard let id, let page = existingPage(for: id) else { return }
+        let factor = change(page.zoomFactor)
+        page.zoomFactor = factor
+        if let host = store?.spaces.lazy.compactMap({ $0.pageTab(id) }).first?.url.host() {
+            siteZoom[host] = abs(factor - 1) < 0.001 ? nil : factor
+            UserDefaults.standard.set(siteZoom, forKey: "SiteZoom")
+        }
+        zoomNotice = (id, factor, (zoomNotice?.count ?? 0) + 1)
+        let count = zoomNotice?.count
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            if zoomNotice?.count == count { zoomNotice = nil }
+        }
+    }
+
+    /// A page arriving on a site uses the zoom picked for it before.
+    private func applySiteZoom(_ page: BrowserPage, tab id: BrowserTab.ID, url: URL?) {
+        guard let host = url?.host(), zoomedHosts[id] != host else { return }
+        zoomedHosts[id] = host
+        let factor = siteZoom[host] ?? 1
+        if abs(page.zoomFactor - factor) > 0.001 { page.zoomFactor = factor }
+    }
+
     // MARK: Full screen
 
     func exitFullscreen() {
@@ -147,6 +181,8 @@ final class PagePool: BrowserPageDelegate {
         if fullscreenTabID == id { fullscreenTabID = nil }
         pageProfiles[id] = nil
         recordedURLs[id] = nil
+        loadingProgress[id] = nil
+        zoomedHosts[id] = nil
         guard let page = pages.removeValue(forKey: id) else { return }
         tabIDs[ObjectIdentifier(page)] = nil
         page.close()
@@ -197,6 +233,7 @@ final class PagePool: BrowserPageDelegate {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
         store?.updateTab(id, title: title, url: url)
         recordHistory(for: id, title: title, url: url)
+        applySiteZoom(page, tab: id, url: url)
         revision += 1
     }
 
@@ -228,6 +265,12 @@ final class PagePool: BrowserPageDelegate {
     func page(_ page: BrowserPage, didFindMatches count: Int, active: Int) {
         guard let id = tabIDs[ObjectIdentifier(page)], id == findTabID else { return }
         findResult = (count, active)
+    }
+
+    func page(_ page: BrowserPage, didChangeLoading isLoading: Bool, progress: Double) {
+        guard let id = tabIDs[ObjectIdentifier(page)] else { return }
+        loadingProgress[id] = isLoading ? max(progress, loadingProgress[id] ?? 0) : nil
+        revision += 1
     }
 
     func page(_ page: BrowserPage, didChangeFullscreen fullscreen: Bool) {

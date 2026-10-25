@@ -126,8 +126,14 @@ private struct NavigationRow: View {
                 .disabled(!(page?.canGoBack ?? false))
             Button { page?.goForward() } label: { Image(systemName: "arrow.right") }
                 .disabled(!(page?.canGoForward ?? false))
-            Button { page?.reload() } label: { Image(systemName: "arrow.clockwise") }
-                .disabled(page == nil)
+            if let id = store.selectedTab?.id, pool.loadingProgress[id] != nil {
+                Button { page?.stopLoading() } label: { Image(systemName: "xmark") }
+                    .help("Stop")
+            } else {
+                Button { page?.reload() } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(page == nil)
+                    .help("Reload")
+            }
         }
         .buttonStyle(SidebarIconButtonStyle())
         .frame(height: 31)

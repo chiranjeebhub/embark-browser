@@ -38,6 +38,8 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
         observations = [
             webView.observe(\.title) { [weak self] _, _ in MainActor.assumeIsolated { self?.report() } },
             webView.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.report() } },
+            webView.observe(\.estimatedProgress) { [weak self] _, _ in MainActor.assumeIsolated { self?.reportLoading() } },
+            webView.observe(\.isLoading) { [weak self] _, _ in MainActor.assumeIsolated { self?.reportLoading() } },
         ]
         webView.load(URLRequest(url: url))
     }
@@ -49,11 +51,21 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
+    func stopLoading() { webView.stopLoading() }
+    var zoomFactor: Double {
+        get { webView.pageZoom }
+        set { webView.pageZoom = newValue }
+    }
+    func print() { webView.printOperation(with: .shared).runModal(for: webView.window ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil) }
 
     func close() {
         observations.removeAll()
         webView.stopLoading()
         webView.removeFromSuperview()
+    }
+
+    private func reportLoading() {
+        delegate?.page(self, didChangeLoading: webView.isLoading, progress: webView.estimatedProgress)
     }
 
     private func report() {

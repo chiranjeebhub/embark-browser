@@ -17,6 +17,7 @@
 #include "include/wrapper/cef_library_loader.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <objc/runtime.h>
 #include <string>
@@ -140,6 +141,10 @@ private:
 - (void)handleTitle:(NSString *)title;
 - (void)handleURL:(NSString *)url;
 - (void)handlePopup:(NSString *)url;
+- (void)handleLoading:(BOOL)isLoading progress:(double)progress {
+    [self.delegate cefBrowser:self didChangeLoading:isLoading progress:progress];
+}
+
 - (void)handleFindCount:(int)count active:(int)active {
     [self.delegate cefBrowser:self didFindMatches:count active:active];
 }
@@ -147,6 +152,7 @@ private:
 - (void)handleFullscreen:(BOOL)fullscreen { [self.delegate cefBrowser:self didChangeFullscreen:fullscreen]; }
 
 - (void)handleNavigationStateBack:(BOOL)back forward:(BOOL)forward;
+- (void)handleLoading:(BOOL)isLoading progress:(double)progress;
 - (void)handleCreated:(CefRefPtr<CefBrowser>)browser;
 - (void)handlePermissionRequest:(NSArray<NSNumber *> *)permissions origin:(NSString *)origin
                       requestID:(uint64_t)requestID respond:(void (^)(BOOL))respond;
@@ -395,8 +401,13 @@ public:
         if (frame->IsMain()) [owner_ handleURL:@(url.ToString().c_str())];
     }
 
-    void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool, bool canGoBack, bool canGoForward) override {
+    void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack, bool canGoForward) override {
         [owner_ handleNavigationStateBack:canGoBack forward:canGoForward];
+        [owner_ handleLoading:isLoading progress:isLoading ? 0.1 : 1];
+    }
+
+    void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser, double progress) override {
+        if (browser->IsLoading()) [owner_ handleLoading:YES progress:progress];
     }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
@@ -564,6 +575,21 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
 - (void)stopFinding { if (_browser) _browser->GetHost()->StopFinding(true); }
 - (void)exitFullscreen { if (_browser) _browser->GetHost()->ExitFullscreen(true); }
 
+- (BOOL)isLoading { return _browser && _browser->IsLoading(); }
+- (void)stopLoading { if (_browser) _browser->StopLoad(); }
+- (void)print { if (_browser) _browser->GetHost()->Print(); }
+
+// Chromium zoom levels are powers of 1.2: level 1 is 120%.
+- (double)zoomFactor { return _browser ? pow(1.2, _browser->GetHost()->GetZoomLevel()) : 1; }
+- (void)setZoomFactor:(double)factor { if (_browser) _browser->GetHost()->SetZoomLevel(log(factor) / log(1.2)); }
+
+- (void)showDevTools {
+    if (!_browser) return;
+    CefWindowInfo windowInfo;
+    CefBrowserSettings settings;
+    _browser->GetHost()->ShowDevTools(windowInfo, new DevToolsClient(), settings, CefPoint());
+}
+
 - (void)close {
     if (_client) _client->Detach();
     if (_browser) _browser->GetHost()->CloseBrowser(true);
@@ -673,6 +699,10 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
     NSURL *target = [NSURL URLWithString:url];
     if (!target) return;
     dispatch_async(dispatch_get_main_queue(), ^{ [self.delegate cefBrowser:self requestsNewTab:target]; });
+}
+
+- (void)handleLoading:(BOOL)isLoading progress:(double)progress {
+    [self.delegate cefBrowser:self didChangeLoading:isLoading progress:progress];
 }
 
 - (void)handleFindCount:(int)count active:(int)active {
