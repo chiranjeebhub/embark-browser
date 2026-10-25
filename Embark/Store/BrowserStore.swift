@@ -32,6 +32,9 @@ final class BrowserStore {
     var draftTheme: SpaceTheme?
     /// The folder whose name is being edited in the tab list.
     var renamingFolderID: Folder.ID?
+    /// A link opened from a favorite, shown in a card over the page like Arc's Peek. It isn't
+    /// in the tab list unless it's opened as a tab.
+    var peekTab: BrowserTab?
 
     static let recentlyClosedLimit = 20
 
@@ -349,6 +352,22 @@ final class BrowserStore {
         guard let tabs = selectedSpace?.tabs, !tabs.isEmpty else { return }
         let index = number == 9 ? tabs.count - 1 : number - 1
         if tabs.indices.contains(index) { selectTab(tabs[index].id) }
+    }
+
+    func peek(_ url: URL) {
+        peekTab = BrowserTab(title: url.host() ?? url.absoluteString, url: url)
+    }
+
+    /// Keeps the peeked page, moving it into the tab list as the selected tab.
+    func openPeekAsTab(title: String?, url: URL?) {
+        guard var tab = peekTab else { return }
+        peekTab = nil
+        if let title, !title.isEmpty { tab.title = title }
+        if let url { tab.url = url }
+        mutateSelectedSpace { space in
+            space.tabs.insert(tab, at: 0)
+            space.selectedTabID = tab.id
+        }
     }
 
     /// ⌘⇧T: the tab closed most recently in this space.

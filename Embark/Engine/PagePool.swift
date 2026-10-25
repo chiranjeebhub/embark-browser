@@ -19,6 +19,8 @@ final class PagePool: BrowserPageDelegate {
     /// Each open page's profile and the address last recorded for it.
     @ObservationIgnored private var pageProfiles: [BrowserTab.ID: Profile.ID] = [:]
     @ObservationIgnored private var recordedURLs: [BrowserTab.ID: URL] = [:]
+    @ObservationIgnored private var liveTitles: [BrowserTab.ID: String] = [:]
+    @ObservationIgnored private var liveURLs: [BrowserTab.ID: URL] = [:]
     /// Pages of private windows, which keep no history or icons.
     @ObservationIgnored private var privatePages: Set<BrowserTab.ID> = []
     /// Sign-in prompts and certificate warnings waiting on each tab.
@@ -187,6 +189,8 @@ final class PagePool: BrowserPageDelegate {
         if fullscreenTabID == id { fullscreenTabID = nil }
         pageProfiles[id] = nil
         recordedURLs[id] = nil
+        liveTitles[id] = nil
+        liveURLs[id] = nil
         loadingProgress[id] = nil
         zoomedHosts[id] = nil
         privatePages.remove(id)
@@ -241,6 +245,8 @@ final class PagePool: BrowserPageDelegate {
     func page(_ page: BrowserPage, didChangeTitle title: String?, url: URL?) {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
         store?.updateTab(id, title: title, url: url)
+        if let title { liveTitles[id] = title }
+        if let url { liveURLs[id] = url }
         recordHistory(for: id, title: title, url: url)
         applySiteZoom(page, tab: id, url: url)
         revision += 1
@@ -258,7 +264,21 @@ final class PagePool: BrowserPageDelegate {
     }
 
     func page(_ page: BrowserPage, requestsNewTab url: URL) {
-        store?.openTab(url)
+        guard let store else { return }
+        // Links from a favorite to another site open in a peek card, as in Arc, so the
+        // favorite's own page stays put and the tab list doesn't fill up.
+        if let id = tabIDs[ObjectIdentifier(page)],
+           let favorite = store.spaces.lazy.compactMap({ $0.favorite(withPage: id) }).first,
+           url.host() != favorite.url.host(), store.peekTab == nil {
+            store.peek(url)
+            return
+        }
+        store.openTab(url)
+    }
+
+    /// The live title and address of a page, including tabs the store doesn't track, like a peek.
+    func currentPage(of id: BrowserTab.ID) -> (title: String?, url: URL?) {
+        (liveTitles[id], liveURLs[id])
     }
 
     func page(_ page: BrowserPage, requestsPermission request: PermissionRequest) {

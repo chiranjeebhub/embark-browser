@@ -36,6 +36,12 @@ struct BrowserWindow: View {
             // The page keeps the same top edge whether or not the sidebar is shown.
             content
                 .overlay {
+                    if let peek = store.peekTab, let space = store.selectedSpace, let profile = store.profile(for: space) {
+                        PeekCard(tab: peek, profile: profile)
+                    }
+                }
+                .animation(.snappy(duration: 0.22), value: store.peekTab?.id)
+                .overlay {
                     if store.isCommandBarOpen {
                         CommandBar().transition(.opacity.combined(with: .scale(scale: 0.98)))
                     }
@@ -160,9 +166,14 @@ struct BrowserWindow: View {
         sidebarShortcut = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Every window installs one; each handles only its own keys.
             guard event.window === window else { return event }
-            // Escape takes a full-screen video back into the page.
+            // Escape takes a full-screen video back into the page, or closes a peek.
             if event.keyCode == 53, pool.fullscreenTabID != nil {
                 pool.exitFullscreen()
+                return nil
+            }
+            if event.keyCode == 53, let peek = store.peekTab, !store.isCommandBarOpen {
+                pool.close(peek.id)
+                store.peekTab = nil
                 return nil
             }
             guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
