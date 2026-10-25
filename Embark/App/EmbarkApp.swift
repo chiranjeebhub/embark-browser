@@ -3,20 +3,19 @@ import SwiftUI
 @main
 struct EmbarkApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var store = BrowserStore()
+    /// For the History and Settings windows, which aren't tied to a browser window.
+    @State private var store = BrowserStore(isWindow: false)
     @State private var pool = PagePool()
 
     var body: some Scene {
-        WindowGroup {
-            BrowserWindow()
-                .environment(store)
+        WindowGroup(id: "browser") {
+            BrowserWindowRoot()
                 .environment(pool)
                 .frame(minWidth: 900, minHeight: 560)
-                .onAppear { pool.store = store }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
-        .commands { BrowserCommands(store: store, pool: pool) }
+        .commands { BrowserCommands(fallbackStore: store, pool: pool) }
 
         Window("History", id: "history") {
             HistoryView()
@@ -35,11 +34,25 @@ struct EmbarkApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Chromium locks its profile folders, so a second copy of Embark can't start it. Hand
+        // over to the copy that's already running instead.
+        if let running = Self.otherRunningInstance() {
+            running.activate()
+            exit(0)
+        }
         #if ENGINE_CEF
         if !EMBCEFRuntime.start(withCacheRoot: CEFEngine.cacheRoot) {
             NSLog("Embark: Chromium failed to start")
         }
         #endif
+    }
+
+    /// Another Embark from the same bundle, e.g. launched from a second copy of the app.
+    private static func otherRunningInstance() -> NSRunningApplication? {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
+        let me = ProcessInfo.processInfo.processIdentifier
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .first { $0.processIdentifier != me && !$0.isTerminated }
     }
 
     #if ENGINE_CEF
@@ -65,13 +78,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// One browser window, with its own selected space, sidebar and command bar.
+struct BrowserWindowRoot: View {
+    @Environment(PagePool.self) private var pool
+    @Environment(\.controlActiveState) private var activeState
+    @State private var store = BrowserStore.forNewWindow()
+
+    var body: some View {
+        BrowserWindow()
+            .environment(store)
+            .focusedSceneValue(\.browserStore, store)
+            .onAppear { pool.activate(store) }
+            .onChange(of: activeState) { if activeState == .key { pool.activate(store) } }
+            // Named after its space in the Window menu and Mission Control.
+            .navigationTitle(store.selectedSpace?.name ?? "Embark")
+            .onChange(of: store.spaces.map(\.id)) {
+                // Another window deleted this window's space.
+                if store.selectedSpace == nil, let first = store.spaces.first { store.selectSpace(first.id) }
+            }
+    }
+}
+
+extension FocusedValues {
+    @Entry var browserStore: BrowserStore?
+}
+
 struct BrowserCommands: Commands {
-    let store: BrowserStore
+    let fallbackStore: BrowserStore
     let pool: PagePool
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.browserStore) private var focusedStore
+
+    /// The browser window in front.
+    private var store: BrowserStore { focusedStore ?? pool.store ?? fallbackStore }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
+            Button("New Window") { openWindow(id: "browser") }
+                .keyboardShortcut("n")
             Button("New Tab") { store.isCommandBarOpen = true }
                 .keyboardShortcut("t")
             Button("Open Location") { store.isCommandBarOpen = true }

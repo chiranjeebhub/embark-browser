@@ -81,7 +81,7 @@ struct HistoryView: View {
 
     /// The picked profile, or the current space's.
     private var currentProfileID: Profile.ID? {
-        profileID ?? store.selectedSpace?.profileID ?? store.profiles.first?.id
+        profileID ?? (pool.store ?? store).selectedSpace?.profileID ?? store.profiles.first?.id
     }
 
     private var profileName: String {
@@ -95,6 +95,8 @@ struct HistoryView: View {
     private func open(_ ids: Set<HistoryEntry.ID>) {
         let picked = entries(ids)
         guard let profile = picked.first?.profileID else { return }
+        // The browser window in front, rather than this window's own store.
+        let store = pool.store ?? self.store
         if store.selectedSpace?.profileID != profile, let space = store.spaces(using: profile).first {
             store.selectSpace(space.id)
         }

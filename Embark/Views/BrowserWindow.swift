@@ -158,6 +158,8 @@ struct BrowserWindow: View {
     private func installSidebarShortcut() {
         guard sidebarShortcut == nil else { return }
         sidebarShortcut = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Every window installs one; each handles only its own keys.
+            guard event.window === window else { return event }
             // Escape takes a full-screen video back into the page.
             if event.keyCode == 53, pool.fullscreenTabID != nil {
                 pool.exitFullscreen()
@@ -241,6 +243,7 @@ struct PageHost: NSViewRepresentable {
     /// the window's mouse-downs instead.
     var onClick: (() -> Void)?
     @Environment(PagePool.self) private var pool
+    @Environment(BrowserStore.self) private var store
 
     final class Coordinator {
         var onClick: (() -> Void)?
@@ -272,6 +275,10 @@ struct PageHost: NSViewRepresentable {
         context.coordinator.onClick = onClick
         let page = pool.page(for: tab, profile: profile)
         guard page.view.superview !== container else { return }
+        // A page can only be in one window. If another window shows it too, it stays there
+        // until this window comes to the front.
+        let isFrontWindow = pool.activeStoreID == ObjectIdentifier(store)
+        if let other = page.view.window, other !== container.window, other.isVisible, !isFrontWindow { return }
         container.subviews.forEach { $0.removeFromSuperview() }
         page.view.frame = container.bounds
         page.view.autoresizingMask = [.width, .height]

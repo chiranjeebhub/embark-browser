@@ -9,7 +9,11 @@ final class PagePool: BrowserPageDelegate {
     @ObservationIgnored private let engine: BrowserEngine
     @ObservationIgnored private var pages: [BrowserTab.ID: BrowserPage] = [:]
     @ObservationIgnored private var tabIDs: [ObjectIdentifier: BrowserTab.ID] = [:]
-    @ObservationIgnored weak var store: BrowserStore?
+    /// The window in front. New tabs from pages open there.
+    @ObservationIgnored private(set) weak var store: BrowserStore?
+    /// Changes when another window comes to the front, so pages move to it (a page can only
+    /// be in one window).
+    private(set) var activeStoreID: ObjectIdentifier?
     /// Pages visited, per profile.
     let history = HistoryStore()
     /// Each open page's profile and the address last recorded for it.
@@ -99,6 +103,11 @@ final class PagePool: BrowserPageDelegate {
     func removeData(for profile: Profile) {
         engine.removeData(for: profile)
         history.removeProfile(profile.id)
+    }
+
+    func activate(_ store: BrowserStore) {
+        self.store = store
+        activeStoreID = ObjectIdentifier(store)
     }
 
     // MARK: Find
