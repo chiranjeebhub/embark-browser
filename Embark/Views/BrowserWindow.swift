@@ -129,7 +129,7 @@ struct BrowserWindow: View {
             }
             .overlay {
                 GeometryReader { geo in
-                    if let zone = pageDropZone {
+                    if let zone = pageDropZone, store.activeDrag != nil {
                         let rect = zone.rect(in: geo.size).insetBy(dx: 6, dy: 6)
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Color.accentColor.opacity(0.18))
@@ -154,7 +154,7 @@ struct BrowserWindow: View {
             .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
             .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
             .animation(.snappy(duration: 0.2), value: pageDropZone)
-            .onChange(of: store.dragEndCount) { pageDropZone = nil }
+            .onChange(of: store.dragSession.changes) { pageDropZone = nil }
         } else {
             EmptySpaceView()
         }
@@ -235,7 +235,7 @@ private struct PageDropHandler: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         guard let zone, let target = store.selectedTab?.id else { return false }
         let store = store, zoneBinding = $zone
-        return SidebarDrag.load(from: info) { drag in
+        let loading = SidebarDrag.load(from: info) { drag in
             zoneBinding.wrappedValue = nil
             withAnimation(.snappy(duration: 0.2)) {
                 switch drag {
@@ -247,8 +247,10 @@ private struct PageDropHandler: DropDelegate {
                 default: break
                 }
             }
-            SidebarDrag.current = nil
+            SidebarDrag.finish(store: store)
         }
+        if !loading { SidebarDrag.finish(store: store) }
+        return loading
     }
 
     /// Updated by the page area's size reader.
