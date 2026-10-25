@@ -33,6 +33,7 @@ struct EmbarkApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Links from other apps open here once the window is up; until then they wait.
     weak var store: BrowserStore? { didSet { openPendingURLs() } }

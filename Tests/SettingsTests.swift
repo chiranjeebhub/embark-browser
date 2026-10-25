@@ -37,7 +37,7 @@ struct SettingsTests {
         #expect(space.tabs.map(\.id) == [recent.id, selected.id, inFolder.id, paneA.id, paneB.id, kept.id])
         // The most recently used of them is newest in the Library.
         #expect(space.recentlyClosed?.map(\.id) == [older.id, old.id])
-        #expect(space.archiveTabs(openedBefore: .now.addingTimeInterval(-24 * 3600), limit: 10).isEmpty)
+        #expect(space.archiveTabs(openedBefore: .now.addingTimeInterval(-24 * 3600), keeping: [kept.id], limit: 10).isEmpty)
     }
 
     @Test func archivingRespectsTheLimit() {
