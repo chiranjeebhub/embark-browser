@@ -130,8 +130,14 @@ private struct NavigationRow: View {
                 .disabled(!(page?.canGoBack ?? false))
             Button { page?.goForward() } label: { Image(systemName: "arrow.right") }
                 .disabled(!(page?.canGoForward ?? false))
-            Button { page?.reload() } label: { Image(systemName: "arrow.clockwise") }
-                .disabled(page == nil)
+            if let id = store.selectedTab?.id, pool.loadingProgress[id] != nil {
+                Button { page?.stopLoading() } label: { Image(systemName: "xmark") }
+                    .help("Stop")
+            } else {
+                Button { page?.reload() } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(page == nil)
+                    .help("Reload")
+            }
         }
         .buttonStyle(SidebarIconButtonStyle())
         .frame(height: 31)
@@ -1113,17 +1119,22 @@ private struct SplitRow: View {
     }
 }
 
-/// Library on the left, one glyph per space in the middle, and the + menu on the right.
+/// Library and downloads on the left, one glyph per space in the middle, and the + menu on the right.
 private struct BottomBar: View {
     @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
     @State private var showsLibrary = false
     @State private var showsNewMenu = false
 
     var body: some View {
         HStack(spacing: 0) {
-            Button { showsLibrary = true } label: { Image(systemName: "archivebox") }
-                .help("Library")
-                .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
+            HStack(spacing: 0) {
+                Button { showsLibrary = true } label: { Image(systemName: "archivebox") }
+                    .help("Library")
+                    .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
+                DownloadsButton()
+            }
+            .animation(.snappy(duration: 0.2), value: pool.downloads.isEmpty)
             Spacer(minLength: 8)
             HStack(spacing: 8) {
                 // The active marker moves across during a swipe.
@@ -1293,17 +1304,29 @@ private struct MenuRow: View {
     private var highlighted: Bool { hovering && isEnabled }
 }
 
+/// The site's own icon once a page has shown it, otherwise its first letter on a tile.
 struct FaviconView: View {
     let url: URL
     let size: CGFloat
 
     var body: some View {
-        AsyncImage(url: url.faviconURL) { image in
-            image.resizable().interpolation(.high)
-        } placeholder: {
-            RoundedRectangle(cornerRadius: size * 0.25).fill(.quaternary)
+        Group {
+            if let image = FaviconCache.shared.image(for: url) {
+                Image(nsImage: image).resizable().interpolation(.high)
+            } else {
+                RoundedRectangle(cornerRadius: size * 0.25)
+                    .fill(.quaternary)
+                    .overlay {
+                        Text(letter).font(.system(size: size * 0.55, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+            }
         }
         .frame(width: size, height: size)
         .clipShape(.rect(cornerRadius: size * 0.25))
+    }
+
+    private var letter: String {
+        let host = (url.host() ?? "").replacingOccurrences(of: "www.", with: "")
+        return host.first.map { String($0).uppercased() } ?? ""
     }
 }
