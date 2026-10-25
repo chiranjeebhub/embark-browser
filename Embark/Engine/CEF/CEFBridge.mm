@@ -144,29 +144,6 @@ private:
 - (void)handleTitle:(NSString *)title;
 - (void)handleURL:(NSString *)url;
 - (void)handlePopup:(NSString *)url;
-- (void)handleLoading:(BOOL)isLoading progress:(double)progress {
-    [self.delegate cefBrowser:self didChangeLoading:isLoading progress:progress];
-}
-
-- (void)handleFavicon:(NSData *)png {
-    dispatch_async(dispatch_get_main_queue(), ^{ [self.delegate cefBrowser:self didChangeFavicon:png]; });
-}
-
-- (void)handleCredentialsForHost:(NSString *)host realm:(NSString *)realm isProxy:(BOOL)isProxy
-                         respond:(void (^)(NSString *, NSString *))respond {
-    [self.delegate cefBrowser:self requestsCredentialsFor:host realm:realm isProxy:isProxy respond:respond];
-}
-
-- (void)handleCertificateErrorForURL:(NSURL *)url description:(NSString *)description respond:(void (^)(BOOL))respond {
-    [self.delegate cefBrowser:self certificateErrorFor:url description:description respond:respond];
-}
-
-- (void)handleFindCount:(int)count active:(int)active {
-    [self.delegate cefBrowser:self didFindMatches:count active:active];
-}
-
-- (void)handleFullscreen:(BOOL)fullscreen { [self.delegate cefBrowser:self didChangeFullscreen:fullscreen]; }
-
 - (void)handleNavigationStateBack:(BOOL)back forward:(BOOL)forward;
 - (void)handleLoading:(BOOL)isLoading progress:(double)progress;
 - (void)handleFavicon:(nullable NSData *)png;
@@ -825,11 +802,11 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
 
 - (void)handleCredentialsForHost:(NSString *)host realm:(NSString *)realm isProxy:(BOOL)isProxy
                          respond:(void (^)(NSString *, NSString *))respond {
-    [self.delegate cefBrowser:self requestsCredentialsFor:host realm:realm isProxy:isProxy respond:respond];
+    [self.delegate cefBrowser:self requestsCredentialsForHost:host realm:realm isProxy:isProxy respond:respond];
 }
 
 - (void)handleCertificateErrorForURL:(NSURL *)url description:(NSString *)description respond:(void (^)(BOOL))respond {
-    [self.delegate cefBrowser:self certificateErrorFor:url description:description respond:respond];
+    [self.delegate cefBrowser:self certificateErrorForURL:url description:description respond:respond];
 }
 
 - (void)handleFindCount:(int)count active:(int)active {
