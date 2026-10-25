@@ -1277,17 +1277,29 @@ private struct MenuRow: View {
     private var highlighted: Bool { hovering && isEnabled }
 }
 
+/// The site's own icon once a page has shown it, otherwise its first letter on a tile.
 struct FaviconView: View {
     let url: URL
     let size: CGFloat
 
     var body: some View {
-        AsyncImage(url: url.faviconURL) { image in
-            image.resizable().interpolation(.high)
-        } placeholder: {
-            RoundedRectangle(cornerRadius: size * 0.25).fill(.quaternary)
+        Group {
+            if let image = FaviconCache.shared.image(for: url) {
+                Image(nsImage: image).resizable().interpolation(.high)
+            } else {
+                RoundedRectangle(cornerRadius: size * 0.25)
+                    .fill(.quaternary)
+                    .overlay {
+                        Text(letter).font(.system(size: size * 0.55, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+            }
         }
         .frame(width: size, height: size)
         .clipShape(.rect(cornerRadius: size * 0.25))
+    }
+
+    private var letter: String {
+        let host = (url.host() ?? "").replacingOccurrences(of: "www.", with: "")
+        return host.first.map { String($0).uppercased() } ?? ""
     }
 }

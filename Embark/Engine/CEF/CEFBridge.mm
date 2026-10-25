@@ -9,7 +9,9 @@
 #include "include/cef_download_handler.h"
 #include "include/cef_find_handler.h"
 #include "include/cef_navigation_entry.h"
+#include "include/cef_image.h"
 #include "include/cef_permission_handler.h"
+#include "include/cef_request_handler.h"
 #include "include/cef_ssl_info.h"
 #include "include/cef_ssl_status.h"
 #include "include/cef_x509_certificate.h"
@@ -138,11 +140,25 @@ private:
 @end
 
 @interface EMBCEFBrowser ()
+- (instancetype)initWithURL:(NSURL *)url context:(CefRefPtr<CefRequestContext>)context;
 - (void)handleTitle:(NSString *)title;
 - (void)handleURL:(NSString *)url;
 - (void)handlePopup:(NSString *)url;
 - (void)handleLoading:(BOOL)isLoading progress:(double)progress {
     [self.delegate cefBrowser:self didChangeLoading:isLoading progress:progress];
+}
+
+- (void)handleFavicon:(NSData *)png {
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.delegate cefBrowser:self didChangeFavicon:png]; });
+}
+
+- (void)handleCredentialsForHost:(NSString *)host realm:(NSString *)realm isProxy:(BOOL)isProxy
+                         respond:(void (^)(NSString *, NSString *))respond {
+    [self.delegate cefBrowser:self requestsCredentialsFor:host realm:realm isProxy:isProxy respond:respond];
+}
+
+- (void)handleCertificateErrorForURL:(NSURL *)url description:(NSString *)description respond:(void (^)(BOOL))respond {
+    [self.delegate cefBrowser:self certificateErrorFor:url description:description respond:respond];
 }
 
 - (void)handleFindCount:(int)count active:(int)active {
@@ -153,6 +169,10 @@ private:
 
 - (void)handleNavigationStateBack:(BOOL)back forward:(BOOL)forward;
 - (void)handleLoading:(BOOL)isLoading progress:(double)progress;
+- (void)handleFavicon:(nullable NSData *)png;
+- (void)handleCredentialsForHost:(NSString *)host realm:(nullable NSString *)realm isProxy:(BOOL)isProxy
+                         respond:(void (^)(NSString *, NSString *))respond;
+- (void)handleCertificateErrorForURL:(NSURL *)url description:(NSString *)description respond:(void (^)(BOOL))respond;
 - (void)handleCreated:(CefRefPtr<CefBrowser>)browser;
 - (void)handlePermissionRequest:(NSArray<NSNumber *> *)permissions origin:(NSString *)origin
                       requestID:(uint64_t)requestID respond:(void (^)(BOOL))respond;
@@ -320,6 +340,42 @@ private:
     IMPLEMENT_REFCOUNTING(DevToolsClient);
 };
 
+// MARK: Page icons
+
+/// Hands the downloaded icon to the page as PNG.
+class FaviconReceiver : public CefDownloadImageCallback {
+public:
+    explicit FaviconReceiver(EMBCEFBrowser *owner) : owner_(owner) {}
+    void OnDownloadImageFinished(const CefString &, int, CefRefPtr<CefImage> image) override {
+        NSData *png = nil;
+        if (image && !image->IsEmpty()) {
+            int width = 0, height = 0;
+            auto data = image->GetAsPNG(2, true, width, height);
+            if (!data) data = image->GetAsPNG(1, true, width, height);
+            if (data && data->GetSize() > 0) {
+                NSMutableData *bytes = [NSMutableData dataWithLength:data->GetSize()];
+                data->GetData(bytes.mutableBytes, data->GetSize(), 0);
+                png = bytes;
+            }
+        }
+        [owner_ handleFavicon:png];
+    }
+
+private:
+    __weak EMBCEFBrowser *owner_;
+    IMPLEMENT_REFCOUNTING(FaviconReceiver);
+};
+
+NSString *CertificateErrorDescription(cef_errorcode_t error) {
+    switch (error) {
+    case ERR_CERT_DATE_INVALID: return @"Its security certificate has expired or isn't valid yet.";
+    case ERR_CERT_COMMON_NAME_INVALID: return @"Its security certificate is for a different site.";
+    case ERR_CERT_AUTHORITY_INVALID: return @"Its security certificate isn't from an authority your Mac trusts.";
+    case ERR_CERT_REVOKED: return @"Its security certificate has been revoked.";
+    default: return @"Its security certificate isn't valid.";
+    }
+}
+
 /// Media requests get ids above this, so they never collide with Chromium's prompt ids.
 uint64_t gNextMediaRequestID = 1ull << 62;
 
@@ -330,7 +386,8 @@ class EmbarkClient : public CefClient,
                      public CefFindHandler,
                      public CefLifeSpanHandler,
                      public CefLoadHandler,
-                     public CefPermissionHandler {
+                     public CefPermissionHandler,
+                     public CefRequestHandler {
 public:
     explicit EmbarkClient(EMBCEFBrowser *owner) : owner_(owner) {}
 
@@ -341,6 +398,7 @@ public:
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+    CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
     // Camera and microphone: use the site's saved choice, otherwise ask with Embark's prompt
     // and save the answer in the profile.
@@ -452,6 +510,37 @@ public:
         [gDownloadObserver cefDownloadDidUpdate:DownloadSnapshot(identifier, item)];
     }
 
+    // The page's own icon, rather than asking a web service for it.
+    void OnFaviconURLChange(CefRefPtr<CefBrowser> browser, const std::vector<CefString> &urls) override {
+        if (urls.empty()) { [owner_ handleFavicon:nil]; return; }
+        browser->GetHost()->DownloadImage(urls.front(), true, 64, false, new FaviconReceiver(owner_));
+    }
+
+    bool GetAuthCredentials(CefRefPtr<CefBrowser>, const CefString &, bool isProxy, const CefString &host, int,
+                            const CefString &realm, const CefString &, CefRefPtr<CefAuthCallback> callback) override {
+        if (!owner_) return false;
+        std::string realmText = realm.ToString();
+        [owner_ handleCredentialsForHost:@(host.ToString().c_str())
+                                   realm:realmText.empty() ? nil : @(realmText.c_str())
+                                 isProxy:isProxy
+                                 respond:^(NSString *user, NSString *password) {
+            if (user && password) callback->Continue(user.UTF8String, password.UTF8String);
+            else callback->Cancel();
+        }];
+        return true;
+    }
+
+    bool OnCertificateError(CefRefPtr<CefBrowser>, cef_errorcode_t error, const CefString &requestURL,
+                            CefRefPtr<CefSSLInfo>, CefRefPtr<CefCallback> callback) override {
+        NSURL *url = [NSURL URLWithString:@(requestURL.ToString().c_str())];
+        if (!owner_ || !url) return false;
+        [owner_ handleCertificateErrorForURL:url description:CertificateErrorDescription(error) respond:^(BOOL proceed) {
+            if (proceed) callback->Continue();
+            else callback->Cancel();
+        }];
+        return true;
+    }
+
     void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override {
         [owner_ handleFullscreen:fullscreen];
     }
@@ -507,6 +596,19 @@ private:
     IMPLEMENT_REFCOUNTING(EmbarkClient);
 };
 
+std::map<std::string, CefRefPtr<CefRequestContext>> gPrivateContexts;
+
+// An in-memory request context: an empty cache path keeps nothing on disk.
+CefRefPtr<CefRequestContext> ContextForPrivateSession(NSString *sessionID) {
+    std::string key = sessionID.UTF8String;
+    auto found = gPrivateContexts.find(key);
+    if (found != gPrivateContexts.end()) return found->second;
+    CefRequestContextSettings settings;
+    auto context = CefRequestContext::CreateContext(settings, nullptr);
+    gPrivateContexts[key] = context;
+    return context;
+}
+
 // One request context per profile directory, shared by every tab in that profile.
 CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
     static std::map<std::string, CefRefPtr<CefRequestContext>> contexts;
@@ -545,6 +647,18 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
 }
 
 - (instancetype)initWithURL:(NSURL *)url profileDirectory:(NSURL *)profileDirectory {
+    return [self initWithURL:url context:ContextForProfile(profileDirectory)];
+}
+
+- (instancetype)initWithURL:(NSURL *)url privateSessionID:(NSString *)sessionID {
+    return [self initWithURL:url context:ContextForPrivateSession(sessionID)];
+}
+
++ (void)endPrivateSession:(NSString *)sessionID {
+    gPrivateContexts.erase(sessionID.UTF8String);
+}
+
+- (instancetype)initWithURL:(NSURL *)url context:(CefRefPtr<CefRequestContext>)context {
     if ((self = [super init])) {
         _view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)];
         _view.autoresizesSubviews = YES;
@@ -554,7 +668,7 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
         windowInfo.SetAsChild((__bridge void *)_view, CefRect(0, 0, 800, 600));
         CefBrowserSettings browserSettings;
         CefBrowserHost::CreateBrowser(windowInfo, _client, url.absoluteString.UTF8String, browserSettings,
-                                      nullptr, ContextForProfile(profileDirectory));
+                                      nullptr, context);
     }
     return self;
 }
@@ -703,6 +817,19 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
 
 - (void)handleLoading:(BOOL)isLoading progress:(double)progress {
     [self.delegate cefBrowser:self didChangeLoading:isLoading progress:progress];
+}
+
+- (void)handleFavicon:(NSData *)png {
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.delegate cefBrowser:self didChangeFavicon:png]; });
+}
+
+- (void)handleCredentialsForHost:(NSString *)host realm:(NSString *)realm isProxy:(BOOL)isProxy
+                         respond:(void (^)(NSString *, NSString *))respond {
+    [self.delegate cefBrowser:self requestsCredentialsFor:host realm:realm isProxy:isProxy respond:respond];
+}
+
+- (void)handleCertificateErrorForURL:(NSURL *)url description:(NSString *)description respond:(void (^)(BOOL))respond {
+    [self.delegate cefBrowser:self certificateErrorFor:url description:description respond:respond];
 }
 
 - (void)handleFindCount:(int)count active:(int)active {

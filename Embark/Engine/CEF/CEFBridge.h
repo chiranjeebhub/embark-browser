@@ -47,6 +47,22 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
 - (void)cefBrowser:(EMBCEFBrowser *)browser didFindMatches:(NSInteger)count active:(NSInteger)active NS_SWIFT_NAME(cefBrowser(_:didFindMatches:active:));
 /// The page started or stopped loading; `progress` runs from 0 to 1.
 - (void)cefBrowser:(EMBCEFBrowser *)browser didChangeLoading:(BOOL)isLoading progress:(double)progress NS_SWIFT_NAME(cefBrowser(_:didChangeLoading:progress:));
+/// The page's icon changed; `png` is nil when it has none.
+- (void)cefBrowser:(EMBCEFBrowser *)browser didChangeFavicon:(nullable NSData *)png NS_SWIFT_NAME(cefBrowser(_:didChangeFavicon:));
+/// A site asks for a user name and password (HTTP authentication). Call `respond` once, with
+/// nil to cancel.
+- (void)cefBrowser:(EMBCEFBrowser *)browser
+    requestsCredentialsForHost:(NSString *)host
+                         realm:(nullable NSString *)realm
+                       isProxy:(BOOL)isProxy
+                       respond:(void (^)(NSString *_Nullable user, NSString *_Nullable password))respond
+    NS_SWIFT_NAME(cefBrowser(_:requestsCredentialsFor:realm:isProxy:respond:));
+/// The site's certificate isn't trusted. Call `respond` once: YES visits it anyway.
+- (void)cefBrowser:(EMBCEFBrowser *)browser
+    certificateErrorForURL:(NSURL *)url
+               description:(NSString *)description
+                   respond:(void (^)(BOOL proceed))respond
+    NS_SWIFT_NAME(cefBrowser(_:certificateErrorFor:description:respond:));
 /// A video or other element went full screen inside the page, or came out of it.
 - (void)cefBrowser:(EMBCEFBrowser *)browser didChangeFullscreen:(BOOL)fullscreen NS_SWIFT_NAME(cefBrowser(_:didChangeFullscreen:));
 @end
@@ -95,6 +111,10 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 /// One Chromium browser (tab). `profileDirectory` keeps its cookies and logins apart.
 @interface EMBCEFBrowser : NSObject
 - (instancetype)initWithURL:(NSURL *)url profileDirectory:(NSURL *)profileDirectory;
+/// A tab of a private window: cookies and storage stay in memory, shared by the tabs with
+/// the same `sessionID`, and are gone after `endPrivateSession:`.
+- (instancetype)initWithURL:(NSURL *)url privateSessionID:(NSString *)sessionID;
++ (void)endPrivateSession:(NSString *)sessionID;
 @property (nonatomic, readonly) NSView *view;
 @property (nonatomic, weak, nullable) id<EMBCEFBrowserDelegate> delegate;
 @property (nonatomic, readonly) BOOL canGoBack;

@@ -17,6 +17,14 @@ struct EmbarkApp: App {
         .windowToolbarStyle(.unifiedCompact)
         .commands { BrowserCommands(fallbackStore: store, pool: pool) }
 
+        WindowGroup("Private Window", id: "private") {
+            BrowserWindowRoot(isPrivate: true)
+                .environment(pool)
+                .frame(minWidth: 900, minHeight: 560)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact)
+
         Window("History", id: "history") {
             HistoryView()
                 .environment(store)
@@ -82,7 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct BrowserWindowRoot: View {
     @Environment(PagePool.self) private var pool
     @Environment(\.controlActiveState) private var activeState
-    @State private var store = BrowserStore.forNewWindow()
+    @State private var store: BrowserStore
+
+    init(isPrivate: Bool = false) {
+        _store = State(initialValue: isPrivate ? .privateWindow() : .forNewWindow())
+    }
 
     var body: some View {
         BrowserWindow()
@@ -91,7 +103,13 @@ struct BrowserWindowRoot: View {
             .onAppear { pool.activate(store) }
             .onChange(of: activeState) { if activeState == .key { pool.activate(store) } }
             // Named after its space in the Window menu and Mission Control.
-            .navigationTitle(store.selectedSpace?.name ?? "Embark")
+            .navigationTitle(store.isPrivate ? "Private Window" : store.selectedSpace?.name ?? "Embark")
+            .onDisappear {
+                // A private window's pages and in-memory data go with it.
+                guard store.isPrivate else { return }
+                for tab in store.spaces.flatMap({ $0.tabs + $0.favorites.compactMap(\.tab) }) { pool.close(tab.id) }
+                for profile in store.profiles { pool.removeData(for: profile) }
+            }
             .onChange(of: store.spaces.map(\.id)) {
                 // Another window deleted this window's space.
                 if store.selectedSpace == nil, let first = store.spaces.first { store.selectSpace(first.id) }
@@ -116,6 +134,8 @@ struct BrowserCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Window") { openWindow(id: "browser") }
                 .keyboardShortcut("n")
+            Button("New Private Window") { openWindow(id: "private") }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("New Tab") { store.isCommandBarOpen = true }
                 .keyboardShortcut("t")
             Button("Open Location") { store.isCommandBarOpen = true }

@@ -16,8 +16,11 @@ final class BrowserLibrary {
     /// Bumped by each change; a write waits briefly so a drag in the theme picker saves once.
     @ObservationIgnored private var saveGeneration = 0
     @ObservationIgnored private let fileURL = BrowserStore.supportDirectory.appending(path: "state.json")
+    /// False for a private window's library, which is never written to disk.
+    @ObservationIgnored private let persists: Bool
 
     init() {
+        persists = true
         load()
         if spaces.isEmpty { seed() }
         nonisolated(unsafe) let library = self
@@ -47,8 +50,19 @@ final class BrowserLibrary {
         isLoading = false
     }
 
+    /// A private window's own library: one space on a new private profile, in memory only.
+    init(privateWindow: Void) {
+        persists = false
+        let profile = Profile(name: "Private", tint: .graphite, isPrivate: true)
+        let theme = SpaceTheme(colors: [SpaceTint.graphite.themeColor], intensity: 0.12, appearance: .dark)
+        let space = Space(name: "Private", theme: theme, icon: "eyeglasses", profileID: profile.id)
+        profiles = [profile]
+        spaces = [space]
+        lastSelectedSpaceID = space.id
+    }
+
     private func save() {
-        guard !isLoading else { return }
+        guard persists, !isLoading else { return }
         saveGeneration += 1
         let generation = saveGeneration
         nonisolated(unsafe) let library = self

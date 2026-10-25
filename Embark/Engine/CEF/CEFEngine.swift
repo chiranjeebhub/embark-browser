@@ -7,7 +7,10 @@ final class CEFEngine: BrowserEngine {
     static let cacheRoot = BrowserStore.supportDirectory.appending(path: "Chromium", directoryHint: .isDirectory)
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
-        CEFPage(browser: EMBCEFBrowser(url: url, profileDirectory: directory(for: profile)))
+        if profile.isPrivate == true {
+            return CEFPage(browser: EMBCEFBrowser(url: url, privateSessionID: profile.id.uuidString))
+        }
+        return CEFPage(browser: EMBCEFBrowser(url: url, profileDirectory: directory(for: profile)))
     }
 
     var supportsExtensions: Bool { true }
@@ -17,6 +20,10 @@ final class CEFEngine: BrowserEngine {
     }
 
     func removeData(for profile: Profile) {
+        if profile.isPrivate == true {
+            EMBCEFBrowser.endPrivateSession(profile.id.uuidString)
+            return
+        }
         try? FileManager.default.removeItem(at: directory(for: profile))
     }
 
@@ -109,6 +116,26 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
 
     nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didChangeLoading isLoading: Bool, progress: Double) {
         MainActor.assumeIsolated { delegate?.page(self, didChangeLoading: isLoading, progress: progress) }
+    }
+
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didChangeFavicon png: Data?) {
+        MainActor.assumeIsolated { delegate?.page(self, didChangeFavicon: png) }
+    }
+
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, requestsCredentialsFor host: String, realm: String?, isProxy: Bool,
+                                respond: @escaping (String?, String?) -> Void) {
+        nonisolated(unsafe) let respond = respond
+        MainActor.assumeIsolated {
+            delegate?.page(self, requestsCredentials: CredentialRequest(host: host, realm: realm, isProxy: isProxy) { respond($0, $1) })
+        }
+    }
+
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, certificateErrorFor url: URL, description: String,
+                                respond: @escaping (Bool) -> Void) {
+        nonisolated(unsafe) let respond = respond
+        MainActor.assumeIsolated {
+            delegate?.page(self, hitCertificateError: CertificateWarning(url: url, description: description) { respond($0) })
+        }
     }
 
     // MARK: Page info

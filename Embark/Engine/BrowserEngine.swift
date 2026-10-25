@@ -93,6 +93,28 @@ protocol BrowserPageDelegate: AnyObject {
     func page(_ page: BrowserPage, didChangeFullscreen fullscreen: Bool)
     /// `progress` runs from 0 to 1 while loading.
     func page(_ page: BrowserPage, didChangeLoading isLoading: Bool, progress: Double)
+    /// The page's own icon as PNG, or nil when it has none.
+    func page(_ page: BrowserPage, didChangeFavicon png: Data?)
+    func page(_ page: BrowserPage, requestsCredentials request: CredentialRequest)
+    func page(_ page: BrowserPage, hitCertificateError warning: CertificateWarning)
+}
+
+/// A site's sign-in prompt (HTTP authentication), answered once through `respond`.
+struct CredentialRequest: Identifiable {
+    let id = UUID()
+    let host: String
+    let realm: String?
+    let isProxy: Bool
+    /// nil cancels.
+    let respond: (_ user: String?, _ password: String?) -> Void
+}
+
+/// A site whose certificate isn't trusted, answered once: true visits it anyway.
+struct CertificateWarning: Identifiable {
+    let id = UUID()
+    let url: URL
+    let description: String
+    let respond: (Bool) -> Void
 }
 
 /// Per-site permissions shown in page info. Raw values match EMBSitePermission.

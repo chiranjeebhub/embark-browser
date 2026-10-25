@@ -19,6 +19,11 @@ final class PagePool: BrowserPageDelegate {
     /// Each open page's profile and the address last recorded for it.
     @ObservationIgnored private var pageProfiles: [BrowserTab.ID: Profile.ID] = [:]
     @ObservationIgnored private var recordedURLs: [BrowserTab.ID: URL] = [:]
+    /// Pages of private windows, which keep no history or icons.
+    @ObservationIgnored private var privatePages: Set<BrowserTab.ID> = []
+    /// Sign-in prompts and certificate warnings waiting on each tab.
+    private(set) var credentialRequests: [BrowserTab.ID: CredentialRequest] = [:]
+    private(set) var certificateWarnings: [BrowserTab.ID: CertificateWarning] = [:]
     @ObservationIgnored private var suspendedDropTypes: [(NSView, [NSPasteboard.PasteboardType])] = []
     /// Bumped when navigation state changes so toolbar buttons refresh.
     private(set) var revision = 0
@@ -67,6 +72,7 @@ final class PagePool: BrowserPageDelegate {
         pages[tab.id] = page
         tabIDs[ObjectIdentifier(page)] = tab.id
         pageProfiles[tab.id] = profile.id
+        if profile.isPrivate == true { privatePages.insert(tab.id) }
         return page
     }
 
@@ -183,6 +189,9 @@ final class PagePool: BrowserPageDelegate {
         recordedURLs[id] = nil
         loadingProgress[id] = nil
         zoomedHosts[id] = nil
+        privatePages.remove(id)
+        credentialRequests.removeValue(forKey: id)?.respond(nil, nil)
+        certificateWarnings.removeValue(forKey: id)?.respond(false)
         guard let page = pages.removeValue(forKey: id) else { return }
         tabIDs[ObjectIdentifier(page)] = nil
         page.close()
@@ -239,7 +248,7 @@ final class PagePool: BrowserPageDelegate {
 
     /// A new address is a visit; a new title for the same address only renames it.
     private func recordHistory(for id: BrowserTab.ID, title: String?, url: URL?) {
-        guard let url, let profileID = pageProfiles[id] else { return }
+        guard let url, let profileID = pageProfiles[id], !privatePages.contains(id) else { return }
         if recordedURLs[id] == url {
             if let title { history.updateTitle(title, for: url, profileID: profileID) }
         } else {
@@ -271,6 +280,34 @@ final class PagePool: BrowserPageDelegate {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
         loadingProgress[id] = isLoading ? max(progress, loadingProgress[id] ?? 0) : nil
         revision += 1
+    }
+
+    func page(_ page: BrowserPage, didChangeFavicon png: Data?) {
+        guard let id = tabIDs[ObjectIdentifier(page)], !privatePages.contains(id), let png,
+              let url = store?.library.spaces.lazy.compactMap({ $0.pageTab(id) }).first?.url else { return }
+        FaviconCache.shared.store(png, for: url)
+    }
+
+    func page(_ page: BrowserPage, requestsCredentials request: CredentialRequest) {
+        guard let id = tabIDs[ObjectIdentifier(page)] else { request.respond(nil, nil); return }
+        credentialRequests.removeValue(forKey: id)?.respond(nil, nil)
+        credentialRequests[id] = request
+    }
+
+    func page(_ page: BrowserPage, hitCertificateError warning: CertificateWarning) {
+        guard let id = tabIDs[ObjectIdentifier(page)] else { warning.respond(false); return }
+        certificateWarnings.removeValue(forKey: id)?.respond(false)
+        certificateWarnings[id] = warning
+    }
+
+    func answerCredentials(for id: BrowserTab.ID, user: String?, password: String?) {
+        credentialRequests.removeValue(forKey: id)?.respond(user, password)
+    }
+
+    /// Going back leaves the untrusted site; visiting anyway loads it.
+    func answerCertificateWarning(for id: BrowserTab.ID, proceed: Bool) {
+        certificateWarnings.removeValue(forKey: id)?.respond(proceed)
+        if !proceed, let page = pages[id], page.canGoBack { page.goBack() }
     }
 
     func page(_ page: BrowserPage, didChangeFullscreen fullscreen: Bool) {

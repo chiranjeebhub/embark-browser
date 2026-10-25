@@ -8,6 +8,11 @@ final class WebKitEngine: BrowserEngine {
     private var stores: [Profile.ID: WKWebsiteDataStore] = [:]
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
+        if profile.isPrivate == true {
+            let store = stores[profile.id] ?? .nonPersistent()
+            stores[profile.id] = store
+            return WebKitPage(url: url, store: store)
+        }
         let store = stores[profile.id] ?? WKWebsiteDataStore(forIdentifier: profile.id)
         stores[profile.id] = store
         return WebKitPage(url: url, store: store)
@@ -15,6 +20,7 @@ final class WebKitEngine: BrowserEngine {
 
     func removeData(for profile: Profile) {
         stores[profile.id] = nil
+        guard profile.isPrivate != true else { return }
         Task { try? await WKWebsiteDataStore.remove(forIdentifier: profile.id) }
     }
 }

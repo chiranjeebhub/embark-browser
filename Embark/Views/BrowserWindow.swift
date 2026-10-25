@@ -231,6 +231,20 @@ struct BrowserWindow: View {
                 }
             }
             .animation(.snappy(duration: 0.2), value: pool.permissionRequests.map(\.id))
+            .overlay {
+                if let warning = pool.certificateWarnings[tab.id] {
+                    CertificateWarningView(tabID: tab.id, warning: warning).id(warning.id)
+                }
+            }
+            .overlay(alignment: .top) {
+                if let request = pool.credentialRequests[tab.id] {
+                    CredentialPromptCard(tabID: tab.id, request: request)
+                        .padding(.top, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .id(request.id)
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: pool.credentialRequests[tab.id]?.id)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
             .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
             .animation(.snappy(duration: 0.2), value: pageDropZone)
