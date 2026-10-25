@@ -281,11 +281,19 @@ enum SidebarDrag: Equatable {
     /// ends, so it can land on the page area to make a split.
     @MainActor func itemProvider(pool: PagePool) -> NSItemProvider {
         Self.current = self
+        // Starting resets anything left over from an earlier drag.
+        pool.store?.dragSession.begin(token)
         pool.suspendPageDrops()
         // A folder name being edited would take the drag's text if it landed there.
         pool.store?.renamingFolderID = nil
         Self.watchForEnd(store: pool.store)
         return NSItemProvider(object: token as NSString)
+    }
+
+    /// Ends the drag: no more placeholders or highlights anywhere.
+    @MainActor static func finish(store: BrowserStore?) {
+        current = nil
+        store?.dragSession.finish()
     }
 
     /// Clears the drag once the mouse is released, however the drag ended: dropped in the
@@ -295,14 +303,13 @@ enum SidebarDrag: Equatable {
             while NSEvent.pressedMouseButtons != 0 { try? await Task.sleep(for: .milliseconds(100)) }
             // Let a drop's own handling finish first.
             try? await Task.sleep(for: .milliseconds(300))
-            current = nil
-            store?.dragEndCount += 1
+            finish(store: store)
         }
     }
 
     /// Removes drag tokens from text, in case one landed in a text field.
     static func strippingTokens(_ text: String) -> String {
-        text.replacing(/embark-(tab|favorite|split|folder):[0-9A-Fa-f-]{36}/, with: "")
+        Folder.strippingDragTokens(text)
     }
 
     /// Reads the dragged string, then runs `apply` on the main actor with the item it names
@@ -370,7 +377,7 @@ private struct FavoritesGrid: View {
 
     private var slots: [Slot] {
         var slots = staying.map(Slot.favorite)
-        if let placeholder { slots.insert(.placeholder, at: min(placeholder, slots.count)) }
+        if let placeholder, store.activeDrag != nil { slots.insert(.placeholder, at: min(placeholder, slots.count)) }
         return slots
     }
 
@@ -396,7 +403,7 @@ private struct FavoritesGrid: View {
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onDrop(of: [.utf8PlainText], delegate: DropHandler(grid: self))
-        .onChange(of: store.dragEndCount) { withAnimation(.dropReflow) { placeholder = nil } }
+        .onChange(of: store.dragSession.changes) { withAnimation(.dropReflow) { placeholder = nil } }
         .animation(.dropReflow, value: slots.map(\.id))
     }
 
@@ -454,7 +461,7 @@ private struct FavoritesGrid: View {
         func performDrop(info: DropInfo) -> Bool {
             let index = grid.placeholder ?? grid.staying.count
             let favorites = grid.favorites, store = grid.store, placeholder = grid.$placeholder
-            return SidebarDrag.load(from: info) { drag in
+            let loading = SidebarDrag.load(from: info) { drag in
                 // The placeholder turns into the real tile in the same animation, so nothing jumps.
                 withAnimation(.dropReflow) {
                     placeholder.wrappedValue = nil
@@ -466,8 +473,10 @@ private struct FavoritesGrid: View {
                     case .split, .folder, nil: break
                     }
                 }
-                SidebarDrag.current = nil
+                SidebarDrag.finish(store: store)
             }
+            if !loading { SidebarDrag.finish(store: store) }
+            return loading
         }
     }
 }
@@ -494,7 +503,9 @@ private struct TabList: View {
     private static let headerHeight: CGFloat = 34
     private static let rowHeight: CGFloat = 36
     private static let spacing: CGFloat = 2
-    static let indent: CGFloat = 16
+    /// How far each folder level is indented. The guide line sits under the parent folder's
+    /// icon with about 8pt of room before the child rows.
+    static let indent: CGFloat = 26
 
     private enum Row: Identifiable {
         case folder(Folder, depth: Int)
@@ -592,7 +603,7 @@ private struct TabList: View {
 
     private var rows: [Row] {
         var rows = staying
-        if let gap {
+        if let gap, store.activeDrag != nil {
             let index = min(gap, rows.count)
             rows.insert(.gap(depth: dropTarget(at: index, in: rows).depth), at: index)
         }
@@ -625,7 +636,7 @@ private struct TabList: View {
         .scrollIndicators(.never)
         .animation(.dropReflow, value: rows.map(\.id))
         .onChange(of: space.id) { marked = [] }
-        .onChange(of: store.dragEndCount) {
+        .onChange(of: store.dragSession.changes) {
             withAnimation(.dropReflow) {
                 gap = nil
                 dropFolder = nil
@@ -638,7 +649,7 @@ private struct TabList: View {
         switch row {
         case .folder(let folder, let depth):
             FolderRow(folder: folder, depth: depth, space: space, isSpringTarget: springFolder == folder.id,
-                      isDropTarget: dropFolder == folder.id)
+                      isDropTarget: dropFolder == folder.id && store.activeDrag != nil)
                 .onDrag { SidebarDrag.folder(folder.id).itemProvider(pool: pool) }
         case .tab(let tab, _, _):
             TabRow(tab: tab, isSelected: tab.id == space.selectedTabID, isMarked: marked.contains(tab.id),
@@ -746,7 +757,8 @@ private struct TabList: View {
             list.springFolder = folder.id
             let store = list.store, spring = list.$springFolder
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                guard spring.wrappedValue == folder.id else { return }
+                // Not once the drag is over (or it dropped meanwhile).
+                guard spring.wrappedValue == folder.id, store.activeDrag != nil else { return }
                 withAnimation(.dropReflow) { store.setFolderExpanded(folder.id, true) }
             }
         }
@@ -766,14 +778,17 @@ private struct TabList: View {
             if let intoFolder { target = (intoFolder, nil, 0) }
             list.dropFolder = nil
             let space = list.space, store = list.store, gap = list.$gap
+            // The target is worked out; clear the gap and highlights now rather than after the
+            // payload loads, so nothing can stay behind.
             list.springFolder = nil
+            list.gap = nil
             // Tabs go before the row's first tab, or first among the folder's tabs when the
             // row is a subfolder (subfolders come before tabs).
             // Dropped on a folder row: last in that folder.
             let anchorTab: BrowserTab.ID? = intoFolder != nil ? nil : target.before?.firstTabID
                 ?? (target.before == nil ? nil : space.tabs(in: target.folder).first?.id)
             let anchorFolder: Folder.ID? = if case .folder(let folder, _) = target.before { folder.id } else { nil }
-            return SidebarDrag.load(from: info) { drag in
+            let loading = SidebarDrag.load(from: info) { drag in
                 withAnimation(.dropReflow) {
                     gap.wrappedValue = nil
                     switch drag {
@@ -788,8 +803,10 @@ private struct TabList: View {
                     case nil: break
                     }
                 }
-                SidebarDrag.current = nil
+                SidebarDrag.finish(store: store)
             }
+            if !loading { SidebarDrag.finish(store: store) }
+            return loading
         }
     }
 }
@@ -805,10 +822,10 @@ private struct Indented: ViewModifier {
                 if depth > 0 {
                     ForEach(0..<depth, id: \.self) { level in
                         Rectangle()
-                            .fill(.primary.opacity(0.12))
+                            .fill(.primary.opacity(0.10))
                             .frame(width: 1)
                             .padding(.vertical, -1)
-                            .offset(x: CGFloat(level) * TabList.indent + 17)
+                            .offset(x: CGFloat(level) * TabList.indent + 18)
                     }
                 }
             }

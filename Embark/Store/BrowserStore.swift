@@ -17,9 +17,12 @@ final class BrowserStore {
     }
     var selectedSpaceID: Space.ID? { didSet { library.lastSelectedSpaceID = selectedSpaceID } }
     var isCommandBarOpen = false
-    /// Bumped when a sidebar drag ends, however it ends, so drop targets clear leftover
-    /// placeholders and highlights.
-    var dragEndCount = 0
+    /// The sidebar drag in progress; see DragSession.
+    var dragSession = DragSession()
+
+    /// The sidebar item being dragged. Drop placeholders and highlights only show while there
+    /// is one, so none can be left behind once a drag is over.
+    var activeDrag: SidebarDrag? { dragSession.token.flatMap(SidebarDrag.init(token:)) }
     /// How far a two-finger swipe has moved the sidebar, as a fraction of its width:
     /// positive reveals the previous space, negative the next one.
     var swipeProgress: CGFloat = 0

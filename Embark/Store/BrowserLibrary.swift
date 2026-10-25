@@ -45,7 +45,11 @@ final class BrowserLibrary {
             let used = Set(profiles.compactMap(\.tint))
             profiles[i].tint = SpaceTint.allCases.first { !used.contains($0) } ?? .blue
         }
-        spaces = snapshot.spaces
+        spaces = snapshot.spaces.map { space in
+            var space = space
+            space.cleanFolderNames()
+            return space
+        }
         lastSelectedSpaceID = snapshot.selectedSpaceID ?? snapshot.spaces.first?.id
         isLoading = false
     }

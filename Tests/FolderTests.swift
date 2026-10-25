@@ -151,3 +151,41 @@ struct FolderTests {
         #expect(titles(space, in: nil) == ["x"])
     }
 }
+
+/// Folder names cleaned of drag tokens, and the drag session clearing.
+struct FolderNameAndDragTests {
+    @Test func cleansDragTokensFromSavedNames() throws {
+        var space = Space(name: "Test", tint: .blue, profileID: UUID())
+        space.folders = [
+            Folder(name: "Untitled Foldeembark-tab:EB12AB34-56CD"),
+            Folder(name: "embark-tab:\(UUID().uuidString)"),
+            Folder(name: "  Work  "),
+        ]
+        space.cleanFolderNames()
+        #expect(space.allFolders.map(\.name) == ["Untitled Folde", "Untitled Folder", "Work"])
+    }
+
+    @Test func renameIgnoresDragTokens() throws {
+        var space = Space(name: "Test", tint: .blue, profileID: UUID())
+        let added = space.addFolder()
+        let id = try #require(added)
+        space.renameFolder(id, to: "Trips embark-folder:\(UUID().uuidString)")
+        #expect(space.folder(id)?.name == "Trips")
+        space.renameFolder(id, to: "embark-tab:ABCD")
+        #expect(space.folder(id)?.name == "Trips")
+    }
+
+    @Test func dragSessionClearsOnFinishAndOnTheNextStart() {
+        var session = DragSession()
+        session.begin("embark-tab:\(UUID().uuidString)")
+        #expect(session.isActive)
+        let started = session.changes
+        session.finish()
+        #expect(!session.isActive)
+        #expect(session.changes == started + 1)
+        session.finish()
+        #expect(!session.isActive)
+        session.begin("embark-folder:\(UUID().uuidString)")
+        #expect(session.isActive && session.changes == started + 3)
+    }
+}

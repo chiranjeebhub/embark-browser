@@ -11,6 +11,18 @@ struct Folder: Identifiable, Codable, Hashable {
     /// Folders nest at most this deep, counting the top level as 1.
     static let maxDepth = 4
     static let defaultName = "Untitled Folder"
+
+    /// Removes sidebar drag tokens ("embark-tab:<id>", whole or cut short) from text. A drag
+    /// dropped into a name field once inserted one.
+    static func strippingDragTokens(_ text: String) -> String {
+        text.replacing(/embark-(tab|favorite|split|folder):[0-9A-Fa-f-]*/, with: "")
+    }
+
+    /// A folder name without drag tokens or surrounding spaces; "Untitled Folder" if nothing's left.
+    static func cleanName(_ name: String) -> String {
+        let name = strippingDragTokens(name).trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? defaultName : name
+    }
 }
 
 /// Folder rules, kept on `Space` so they can be tested without the store.
@@ -61,9 +73,19 @@ extension Space {
     }
 
     mutating func renameFolder(_ id: Folder.ID, to name: String) {
-        let name = name.trimmingCharacters(in: .whitespaces)
+        let name = Folder.strippingDragTokens(name).trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, let i = folders?.firstIndex(where: { $0.id == id }) else { return }
         folders![i].name = name
+    }
+
+    /// Cleans every folder name; used on saved state, which may hold names from before
+    /// drag tokens were kept out.
+    mutating func cleanFolderNames() {
+        folders = folders?.map { folder in
+            var folder = folder
+            folder.name = Folder.cleanName(folder.name)
+            return folder
+        }
     }
 
     mutating func setExpanded(_ id: Folder.ID, _ expanded: Bool) {
