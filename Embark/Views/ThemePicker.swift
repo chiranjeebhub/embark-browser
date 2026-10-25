@@ -9,12 +9,23 @@ struct ThemeBackground: View {
             Rectangle().fill(.background)
             LinearGradient(colors: theme.gradientColors, startPoint: .topLeading, endPoint: .bottomTrailing)
                 .opacity(0.2 + 0.5 * theme.intensity)
-            Circle().fill(theme.accent.opacity(0.3)).frame(width: 460).blur(radius: 100).offset(x: -420, y: -300)
+            // A soft glow, drawn as a gradient: the same look as a heavily blurred circle, but
+            // without a 100pt blur pass on every resize and space swipe.
+            Circle()
+                .fill(RadialGradient(stops: Self.glow.map { Gradient.Stop(color: theme.accent.opacity(0.3 * $0.opacity), location: $0.location) },
+                                     center: .center, startRadius: 0, endRadius: 330))
+                .frame(width: 660, height: 660)
+                .offset(x: -420, y: -300)
             if theme.grain > 0 {
                 Grain.image.resizable(resizingMode: .tile).opacity(theme.grain * 0.3)
             }
         }
     }
+
+    /// The falloff of a 460pt circle blurred by 100pt, from its center out to where it fades.
+    private static let glow: [(opacity: Double, location: Double)] = [
+        (1, 0), (0.92, 0.3), (0.7, 0.5), (0.4, 0.66), (0.15, 0.82), (0.04, 0.92), (0, 1),
+    ]
 }
 
 /// A tile of random light and dark specks, tiled over the window as film grain.

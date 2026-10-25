@@ -321,8 +321,10 @@ final class PagePool: BrowserPageDelegate {
 
     func page(_ page: BrowserPage, didChangeLoading isLoading: Bool, progress: Double) {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
+        let wasLoading = loadingProgress[id] != nil
         loadingProgress[id] = isLoading ? max(progress, loadingProgress[id] ?? 0) : nil
-        revision += 1
+        // Toolbar buttons only care about starting and stopping, not each progress step.
+        if wasLoading != isLoading { revision += 1 }
     }
 
     func page(_ page: BrowserPage, didChangeFavicon png: Data?) {

@@ -38,9 +38,13 @@ struct History: Codable {
     }
 
     /// A page's title arrives after its address; this fills it in without counting a visit.
-    mutating func updateTitle(_ title: String, for url: URL, profileID: Profile.ID) {
-        guard !title.isEmpty, let i = entries.firstIndex(where: { $0.url == url && $0.profileID == profileID }) else { return }
+    /// Returns false when the entry already had that title.
+    @discardableResult
+    mutating func updateTitle(_ title: String, for url: URL, profileID: Profile.ID) -> Bool {
+        guard !title.isEmpty, let i = entries.firstIndex(where: { $0.url == url && $0.profileID == profileID }),
+              entries[i].title != title else { return false }
         entries[i].title = title
+        return true
     }
 
     mutating func remove(_ ids: Set<HistoryEntry.ID>) {

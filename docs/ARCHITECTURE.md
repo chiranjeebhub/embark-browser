@@ -44,6 +44,13 @@ xcodegen generate
 xcodebuild -scheme EmbarkChromium build   # or pick the EmbarkChromium scheme in Xcode
 ```
 
+That is a Debug build, which is fine for working on Embark but much slower to use: Swift
+and SwiftUI run unoptimized. For the copy you browse with, build Release:
+
+```sh
+xcodebuild -scheme EmbarkChromium -configuration Release build
+```
+
 How the pieces fit:
 
 - `EmbarkChromium` compiles the same app with `ENGINE_CEF`, the bridging header

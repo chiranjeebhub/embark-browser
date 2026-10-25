@@ -25,7 +25,7 @@ final class BrowserLibrary {
         if spaces.isEmpty { seed() }
         nonisolated(unsafe) let library = self
         _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-            library.writeNow()
+            library.writeNow(waiting: true)
         }
     }
 
@@ -72,10 +72,18 @@ final class BrowserLibrary {
         }
     }
 
-    private func writeNow() {
-        let snapshot = Snapshot(profiles: profiles, spaces: spaces, selectedSpaceID: lastSelectedSpaceID)
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    /// Encoding and writing happen off the main thread, in order, so a big library (imported
+    /// bookmarks, archived tabs) doesn't stall the window.
+    private static let writer = DispatchQueue(label: "dev.embark.library-writer", qos: .utility)
+
+    private func writeNow(waiting: Bool = false) {
+        nonisolated(unsafe) let snapshot = Snapshot(profiles: profiles, spaces: spaces, selectedSpaceID: lastSelectedSpaceID)
+        let fileURL = fileURL
+        let write: @Sendable () -> Void = {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: fileURL, options: .atomic)
+        }
+        if waiting { Self.writer.sync(execute: write) } else { Self.writer.async(execute: write) }
     }
 
     private func seed() {

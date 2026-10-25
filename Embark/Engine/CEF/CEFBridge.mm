@@ -21,6 +21,7 @@
 #include "include/wrapper/cef_library_loader.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <map>
 #include <objc/runtime.h>
@@ -65,20 +66,77 @@ void InstallCefAppProtocol(NSApplication *app) {
 namespace {
 
 CefScopedLibraryLoader *gLibraryLoader = nullptr;
-NSTimer *gPumpTimer = nil;
 // Every open browser, so they can all be closed before CefShutdown (which requires it).
 std::map<int, CefRefPtr<CefBrowser>> gBrowsers;
 void (^gAllBrowsersClosed)(void) = nil;
 
-// Embark keeps AppKit's run loop and drives CEF with an external message pump.
+// Embark keeps AppKit's run loop and drives CEF with an external message pump, as cefclient
+// does: one timer for the next piece of work, so a busy page asking for work thousands of
+// times a second queues one job instead of thousands that crowd out clicks and scrolling.
+// Work CEF asks for while it is already running is done right after it returns.
+
+// No longer than this between pumps, in case CEF doesn't ask (cefclient uses the same).
+constexpr int64_t kMaxPumpDelayMs = 1000 / 30;
+NSTimer *gPumpTimer = nil;
+bool gPumping = false;
+bool gPumpReentered = false;
+bool gPumpStopped = false;
+// An immediate pump is already queued on the main thread.
+std::atomic<bool> gImmediatePumpQueued{false};
+
+void SchedulePump(int64_t delayMs);
+
+void Pump() {
+    if (gPumpStopped) return;
+    if (gPumping) { gPumpReentered = true; return; }
+    gPumping = true;
+    gPumpReentered = false;
+    CefDoMessageLoopWork();
+    gPumping = false;
+    if (gPumpReentered) {
+        SchedulePump(0);
+    } else if (!gPumpTimer) {
+        SchedulePump(kMaxPumpDelayMs);
+    }
+}
+
+// Main thread. Keeps whichever of the pending and the new deadline comes first.
+void ArmPumpTimer(int64_t delayMs) {
+    if (gPumpStopped) return;
+    NSTimeInterval delay = MIN(delayMs, kMaxPumpDelayMs) / 1000.0;
+    NSDate *fireDate = [NSDate dateWithTimeIntervalSinceNow:delay];
+    if (gPumpTimer && [gPumpTimer.fireDate compare:fireDate] != NSOrderedDescending) return;
+    [gPumpTimer invalidate];
+    gPumpTimer = [NSTimer timerWithTimeInterval:delay repeats:NO block:^(NSTimer *) {
+        gPumpTimer = nil;
+        Pump();
+    }];
+    // Common modes, so pages keep running while a window is resized or a menu is open.
+    [NSRunLoop.mainRunLoop addTimer:gPumpTimer forMode:NSRunLoopCommonModes];
+}
+
+// Any thread.
+void SchedulePump(int64_t delayMs) {
+    if (delayMs <= 0) {
+        if (gImmediatePumpQueued.exchange(true)) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            gImmediatePumpQueued = false;
+            [gPumpTimer invalidate];
+            gPumpTimer = nil;
+            Pump();
+        });
+    } else if (NSThread.isMainThread) {
+        ArmPumpTimer(delayMs);
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{ ArmPumpTimer(delayMs); });
+    }
+}
+
 class EmbarkApp : public CefApp, public CefBrowserProcessHandler {
 public:
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
 
-    void OnScheduleMessagePumpWork(int64_t delayMs) override {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, MAX(delayMs, 0) * NSEC_PER_MSEC),
-                       dispatch_get_main_queue(), ^{ CefDoMessageLoopWork(); });
-    }
+    void OnScheduleMessagePumpWork(int64_t delayMs) override { SchedulePump(delayMs); }
 
 private:
     IMPLEMENT_REFCOUNTING(EmbarkApp);
@@ -107,10 +165,7 @@ private:
 
     if (!CefInitialize(args, settings, new EmbarkApp(), nullptr)) return NO;
 
-    // Safety net in case scheduled work is missed; cheap when idle.
-    gPumpTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 30.0 repeats:YES block:^(NSTimer *) {
-        CefDoMessageLoopWork();
-    }];
+    SchedulePump(0);
     return YES;
 }
 
@@ -124,6 +179,7 @@ private:
 }
 
 + (void)shutdown {
+    gPumpStopped = true;
     [gPumpTimer invalidate];
     gPumpTimer = nil;
     CefShutdown();
