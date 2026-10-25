@@ -224,7 +224,7 @@ struct EditSpacePopover: View {
                     Text("Profile").font(.system(size: 13, weight: .semibold))
                     HStack(spacing: 10) {
                         ProfileBadge(profile: store.profile(for: space), size: 26)
-                        Picker("Profile", selection: Binding(get: { space.profileID }, set: changeProfile)) {
+                        Picker("Profile", selection: Binding(get: { space.profileID }, set: { changeProfile($0) })) {
                             ForEach(store.profiles) { profile in Text(profile.name).tag(profile.id) }
                         }
                         .labelsHidden()
@@ -245,6 +245,8 @@ struct EditSpacePopover: View {
     }
 
     private func changeProfile(_ profileID: Profile.ID) {
-        store.setProfile(profileID, for: spaceID).forEach(pool.close)
+        // Passed as a closure, not `pool.close` itself: the method reference crashes the
+        // Swift 6.3 compiler here (IRGen of an isolated(any) UUID thunk).
+        for id in store.setProfile(profileID, for: spaceID) { pool.close(id) }
     }
 }

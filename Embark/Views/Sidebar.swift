@@ -1153,7 +1153,7 @@ private struct SpaceGlyph: View {
         .contextMenu {
             Button("Edit Space…") { showsEditor = true }
             Picker("Profile", selection: Binding(get: { space.profileID }, set: { id in
-                store.setProfile(id, for: space.id).forEach(pool.close)
+                for page in store.setProfile(id, for: space.id) { pool.close(page) }
             })) {
                 ForEach(store.profiles) { profile in Text(profile.name).tag(profile.id) }
             }
@@ -1165,7 +1165,9 @@ private struct SpaceGlyph: View {
         }
         .popover(isPresented: $showsEditor, arrowEdge: .top) { EditSpacePopover(spaceID: space.id) }
         .confirmationDialog("Delete “\(space.name)”?", isPresented: $confirmsDelete) {
-            Button("Delete Space", role: .destructive) { store.deleteSpace(space.id).forEach(pool.close) }
+            Button("Delete Space", role: .destructive) {
+                for page in store.deleteSpace(space.id) { pool.close(page) }
+            }
         } message: {
             Text("Its tabs, folders and favorites are removed. Its profile and logins stay.")
         }
