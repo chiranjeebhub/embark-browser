@@ -9,6 +9,8 @@ struct Profile: Identifiable, Codable, Hashable {
     var pinnedExtensionIDs: [String]?
     /// The color of the profile's badge. Optional so older saved state loads.
     var tint: SpaceTint?
+    /// A private window's profile: nothing it does is kept after the window closes.
+    var isPrivate: Bool?
 }
 
 /// A site pinned to a space's favorites grid. Like Arc, a favorite is its own tab: it has its
@@ -184,13 +186,5 @@ enum SpaceTint: String, Codable, CaseIterable {
         case .pink: Color(red: 0.86, green: 0.15, blue: 0.47)
         case .graphite: Color(red: 0.35, green: 0.36, blue: 0.40)
         }
-    }
-}
-
-extension URL {
-    /// Favicon via a public service until the engine reports page icons itself.
-    var faviconURL: URL? {
-        guard let host = host() else { return nil }
-        return URL(string: "https://www.google.com/s2/favicons?sz=64&domain=\(host)")
     }
 }

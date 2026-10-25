@@ -11,6 +11,10 @@ protocol BrowserEngine: AnyObject {
     func extensions(for profile: Profile) -> [InstalledExtension]
     /// Deletes a profile's logins, cookies, history and cache from disk. Its pages are closed.
     func removeData(for profile: Profile)
+    /// Downloads from every page: `destination` picks where a new one is saved (nil cancels it)
+    /// and `update` reports each change.
+    func observeDownloads(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void)
+    func cancelDownload(_ id: Download.ID)
 
     // Settings ▸ Privacy and Settings ▸ Profiles.
     /// Whether third-party cookies can be blocked and saved site permissions listed.
@@ -29,6 +33,8 @@ protocol BrowserEngine: AnyObject {
 extension BrowserEngine {
     var supportsExtensions: Bool { false }
     func extensions(for profile: Profile) -> [InstalledExtension] { [] }
+    func observeDownloads(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void) {}
+    func cancelDownload(_ id: Download.ID) {}
     var supportsSiteSettings: Bool { false }
     func setBlocksThirdPartyCookies(_ block: Bool) {}
     func siteExceptions(for profile: Profile) -> [SiteException] { [] }
@@ -69,6 +75,18 @@ protocol BrowserPage: AnyObject {
     func countCookies(_ completion: @escaping (Int) -> Void)
     /// Deletes the site's cookies and storage.
     func clearSiteData(_ completion: @escaping () -> Void)
+
+    /// Highlights matches of `text`; results come back through the delegate.
+    func find(_ text: String, forward: Bool, findNext: Bool)
+    func stopFinding()
+    /// Takes a full-screen video or element back into the page.
+    func exitFullscreen()
+
+    func stopLoading()
+    /// 1 is 100%.
+    var zoomFactor: Double { get set }
+    func print()
+    func showDevTools()
 }
 
 extension BrowserPage {
@@ -79,6 +97,16 @@ extension BrowserPage {
     func setAudioMuted(_ muted: Bool) {}
     func countCookies(_ completion: @escaping (Int) -> Void) { completion(0) }
     func clearSiteData(_ completion: @escaping () -> Void) { completion() }
+    func find(_ text: String, forward: Bool, findNext: Bool) {}
+    func stopFinding() {}
+    func exitFullscreen() {}
+    func stopLoading() {}
+    var zoomFactor: Double {
+        get { 1 }
+        set {}
+    }
+    func print() {}
+    func showDevTools() {}
 }
 
 @MainActor
@@ -87,6 +115,33 @@ protocol BrowserPageDelegate: AnyObject {
     func page(_ page: BrowserPage, requestsNewTab url: URL)
     func page(_ page: BrowserPage, requestsPermission request: PermissionRequest)
     func page(_ page: BrowserPage, dismissedPermissionRequest id: UInt64)
+    /// `active` counts from 1; 0 when no match is selected.
+    func page(_ page: BrowserPage, didFindMatches count: Int, active: Int)
+    func page(_ page: BrowserPage, didChangeFullscreen fullscreen: Bool)
+    /// `progress` runs from 0 to 1 while loading.
+    func page(_ page: BrowserPage, didChangeLoading isLoading: Bool, progress: Double)
+    /// The page's own icon as PNG, or nil when it has none.
+    func page(_ page: BrowserPage, didChangeFavicon png: Data?)
+    func page(_ page: BrowserPage, requestsCredentials request: CredentialRequest)
+    func page(_ page: BrowserPage, hitCertificateError warning: CertificateWarning)
+}
+
+/// A site's sign-in prompt (HTTP authentication), answered once through `respond`.
+struct CredentialRequest: Identifiable {
+    let id = UUID()
+    let host: String
+    let realm: String?
+    let isProxy: Bool
+    /// nil cancels.
+    let respond: (_ user: String?, _ password: String?) -> Void
+}
+
+/// A site whose certificate isn't trusted, answered once: true visits it anyway.
+struct CertificateWarning: Identifiable {
+    let id = UUID()
+    let url: URL
+    let description: String
+    let respond: (Bool) -> Void
 }
 
 /// Per-site permissions shown in page info. Raw values match EMBSitePermission.

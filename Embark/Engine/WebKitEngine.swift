@@ -20,6 +20,11 @@ final class WebKitEngine: BrowserEngine {
     }
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
+        if profile.isPrivate == true {
+            let store = stores[profile.id] ?? .nonPersistent()
+            stores[profile.id] = store
+            return WebKitPage(url: url, store: store)
+        }
         let store = stores[profile.id] ?? WKWebsiteDataStore(forIdentifier: profile.id)
         stores[profile.id] = store
         return WebKitPage(url: url, store: store)
@@ -27,6 +32,7 @@ final class WebKitEngine: BrowserEngine {
 
     func removeData(for profile: Profile) {
         stores[profile.id] = nil
+        guard profile.isPrivate != true else { return }
         Task { try? await WKWebsiteDataStore.remove(forIdentifier: profile.id) }
     }
 
@@ -65,6 +71,8 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
         observations = [
             webView.observe(\.title) { [weak self] _, _ in MainActor.assumeIsolated { self?.report() } },
             webView.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.report() } },
+            webView.observe(\.estimatedProgress) { [weak self] _, _ in MainActor.assumeIsolated { self?.reportLoading() } },
+            webView.observe(\.isLoading) { [weak self] _, _ in MainActor.assumeIsolated { self?.reportLoading() } },
         ]
         webView.load(URLRequest(url: url))
     }
@@ -76,11 +84,21 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
+    func stopLoading() { webView.stopLoading() }
+    var zoomFactor: Double {
+        get { webView.pageZoom }
+        set { webView.pageZoom = newValue }
+    }
+    func print() { webView.printOperation(with: .shared).runModal(for: webView.window ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil) }
 
     func close() {
         observations.removeAll()
         webView.stopLoading()
         webView.removeFromSuperview()
+    }
+
+    private func reportLoading() {
+        delegate?.page(self, didChangeLoading: webView.isLoading, progress: webView.estimatedProgress)
     }
 
     private func report() {

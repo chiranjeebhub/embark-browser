@@ -1,12 +1,21 @@
 import AppKit
 import Observation
 
-/// All browser state: profiles, spaces, favorites and tabs. Saved to Application Support as JSON.
+/// One window's view of the browser: its selected space and what its sidebar and command bar
+/// are doing. Profiles, spaces, favorites and tabs live in the shared `BrowserLibrary`, so
+/// every window sees the same ones.
 @Observable
 final class BrowserStore {
-    var profiles: [Profile] = [] { didSet { save() } }
-    var spaces: [Space] = [] { didSet { save() } }
-    var selectedSpaceID: Space.ID? { didSet { save() } }
+    let library: BrowserLibrary
+    var profiles: [Profile] {
+        get { library.profiles }
+        set { library.profiles = newValue }
+    }
+    var spaces: [Space] {
+        get { library.spaces }
+        set { library.spaces = newValue }
+    }
+    var selectedSpaceID: Space.ID? { didSet { library.lastSelectedSpaceID = selectedSpaceID } }
     var isCommandBarOpen = false
     /// Bumped when a sidebar drag ends, however it ends, so drop targets clear leftover
     /// placeholders and highlights.
@@ -23,14 +32,12 @@ final class BrowserStore {
     var draftTheme: SpaceTheme?
     /// The folder whose name is being edited in the tab list.
     var renamingFolderID: Folder.ID?
+    /// A link opened from a favorite, shown in a card over the page like Arc's Peek. It isn't
+    /// in the tab list unless it's opened as a tab.
+    var peekTab: BrowserTab?
 
     /// Archived tabs go here too, so it keeps more than a handful.
     static let recentlyClosedLimit = 100
-
-    @ObservationIgnored private var isLoading = false
-    /// Bumped by each change; a write waits briefly so a drag in the theme picker saves once.
-    @ObservationIgnored private var saveGeneration = 0
-    @ObservationIgnored private let fileURL = BrowserStore.supportDirectory.appending(path: "state.json")
 
     static let supportDirectory: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -39,13 +46,32 @@ final class BrowserStore {
         return dir
     }()
 
-    init() {
-        load()
-        if spaces.isEmpty { seed() }
-        nonisolated(unsafe) let store = self
-        _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-            store.writeNow()
-        }
+    /// A window showing `spaceID`, or the space used last.
+    /// `isWindow` is false for the store behind History and Settings.
+    init(library: BrowserLibrary = .shared, spaceID: Space.ID? = nil, isWindow: Bool = true) {
+        self.library = library
+        selectedSpaceID = spaceID ?? library.lastSelectedSpaceID ?? library.spaces.first?.id
+        if isWindow { Self.windows.add(self) }
+    }
+
+    /// Every window's store, so a new window can pick a space no other window shows.
+    nonisolated(unsafe) private static let windows = NSHashTable<BrowserStore>.weakObjects()
+
+    /// A private window, with its own private space and profile.
+    static func privateWindow() -> BrowserStore {
+        BrowserStore(library: BrowserLibrary(privateWindow: ()), isWindow: false)
+    }
+
+    var isPrivate: Bool { profiles.contains { $0.isPrivate == true } }
+
+    /// The space used last, unless another window shows it; then the first space no window
+    /// shows, so two windows don't fight over the same page.
+    static func forNewWindow(library: BrowserLibrary = .shared) -> BrowserStore {
+        let shown = Set(windows.allObjects.compactMap(\.selectedSpaceID))
+        let preferred = library.lastSelectedSpaceID ?? library.spaces.first?.id
+        let spaceID = preferred.flatMap { shown.contains($0) ? nil : $0 }
+            ?? library.spaces.first { !shown.contains($0.id) }?.id ?? preferred
+        return BrowserStore(library: library, spaceID: spaceID)
     }
 
     // MARK: Selection
@@ -313,6 +339,52 @@ final class BrowserStore {
         selectTab(split.tabIDs[(i + offset + split.tabIDs.count) % split.tabIDs.count])
     }
 
+    /// ⌃Tab and ⌃⇧Tab: the next or previous open tab in the tab list, wrapping around.
+    func selectTab(offset: Int) {
+        guard let space = selectedSpace else { return }
+        let open = space.tabs.filter { $0.isUnloaded != true }
+        guard !open.isEmpty else { return }
+        let i = open.firstIndex { $0.id == space.selectedTabID } ?? (offset > 0 ? -1 : 0)
+        selectTab(open[(i + offset + open.count) % open.count].id)
+    }
+
+    /// ⌘1 to ⌘8 pick that tab in the list; ⌘9 picks the last one, as in Chrome.
+    func selectTab(number: Int) {
+        guard let tabs = selectedSpace?.tabs, !tabs.isEmpty else { return }
+        let index = number == 9 ? tabs.count - 1 : number - 1
+        if tabs.indices.contains(index) { selectTab(tabs[index].id) }
+    }
+
+    func peek(_ url: URL) {
+        peekTab = BrowserTab(title: url.host() ?? url.absoluteString, url: url)
+    }
+
+    /// Keeps the peeked page, moving it into the tab list as the selected tab.
+    func openPeekAsTab(title: String?, url: URL?) {
+        guard var tab = peekTab else { return }
+        peekTab = nil
+        if let title, !title.isEmpty { tab.title = title }
+        if let url { tab.url = url }
+        mutateSelectedSpace { space in
+            space.tabs.insert(tab, at: 0)
+            space.selectedTabID = tab.id
+        }
+    }
+
+    /// Moves a page from a Little window into a space's tab list, keeping the page as it is.
+    func adoptTab(_ tab: BrowserTab, into spaceID: Space.ID) {
+        selectSpace(spaceID)
+        mutateSelectedSpace { space in
+            space.tabs.insert(tab, at: 0)
+            space.selectedTabID = tab.id
+        }
+    }
+
+    /// ⌘⇧T: the tab closed most recently in this space.
+    func reopenLastClosedTab() {
+        if let last = selectedSpace?.recentlyClosed?.last { reopenClosedTab(last.id) }
+    }
+
     /// New Split: the next tab picked in the command bar opens beside the current one.
     func startNewSplit() {
         guard let current = selectedTab?.id else { isCommandBarOpen = true; return }
@@ -489,73 +561,10 @@ final class BrowserStore {
         profiles[i].pinnedExtensionIDs = ids
     }
 
-    // MARK: Persistence
+    // MARK: Helpers
 
     private func mutateSelectedSpace(_ body: (inout Space) -> Void) {
         guard let i = spaces.firstIndex(where: { $0.id == selectedSpaceID }) else { return }
         body(&spaces[i])
-    }
-
-    private struct Snapshot: Codable {
-        var profiles: [Profile]
-        var spaces: [Space]
-        var selectedSpaceID: Space.ID?
-    }
-
-    private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
-        isLoading = true
-        profiles = snapshot.profiles
-        // Profiles saved before badge colors get distinct ones.
-        for i in profiles.indices where profiles[i].tint == nil {
-            let used = Set(profiles.compactMap(\.tint))
-            profiles[i].tint = SpaceTint.allCases.first { !used.contains($0) } ?? .blue
-        }
-        spaces = snapshot.spaces
-        selectedSpaceID = snapshot.selectedSpaceID ?? snapshot.spaces.first?.id
-        isLoading = false
-    }
-
-    private func save() {
-        guard !isLoading else { return }
-        saveGeneration += 1
-        let generation = saveGeneration
-        nonisolated(unsafe) let store = self
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            guard store.saveGeneration == generation else { return }
-            store.writeNow()
-        }
-    }
-
-    private func writeNow() {
-        let snapshot = Snapshot(profiles: profiles, spaces: spaces, selectedSpaceID: selectedSpaceID)
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? data.write(to: fileURL, options: .atomic)
-    }
-
-    private func seed() {
-        isLoading = true
-        let personal = Profile(name: "Personal", tint: .purple)
-        let work = Profile(name: "Work", tint: .blue)
-        profiles = [personal, work]
-        func fav(_ title: String, _ url: String) -> Favorite { Favorite(title: title, url: URL(string: url)!) }
-        spaces = [
-            Space(name: "Personal", theme: SpaceTheme(tint: .purple), icon: "house.fill", profileID: personal.id, favorites: [
-                fav("Gmail", "https://mail.google.com"),
-                fav("YouTube", "https://www.youtube.com"),
-                fav("WhatsApp", "https://web.whatsapp.com"),
-                fav("Maps", "https://maps.google.com"),
-            ]),
-            Space(name: "Work", theme: SpaceTheme(tint: .blue), icon: "briefcase.fill", profileID: work.id, favorites: [
-                fav("Gmail", "https://mail.google.com"),
-                fav("Calendar", "https://calendar.google.com"),
-                fav("Slack", "https://app.slack.com"),
-                fav("GitHub", "https://github.com"),
-            ]),
-        ]
-        selectedSpaceID = spaces.first?.id
-        isLoading = false
-        save()
     }
 }
