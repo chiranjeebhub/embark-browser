@@ -8,7 +8,8 @@ powered by Chromium.
 - **Spaces:** each space has its own tint, its own favorites, its own tabs and its own
   profile, so work and personal logins never mix.
 - **Vertical tabs** in a sidebar that sits on the window's tint, not in a separate box.
-- **Command bar** (⌘T): switch tabs, open favorites, or go to any address or search.
+- **Command bar** (⌘T): switch tabs, open favorites or pages from history, run actions, or
+  go to any address or search.
 - **Split view** (⌘⇧=): two tabs side by side.
 - **Fast:** tabs stay live for instant switching, idle tabs sleep to save memory.
 
@@ -56,7 +57,17 @@ xcodebuild test -project Embark.xcodeproj -scheme EmbarkTests -destination 'plat
 | Action | Shortcut |
 | --- | --- |
 | Command bar / new tab | ⌘T or ⌘L |
-| Close tab | ⌘W |
+| New window / private window | ⌘N / ⇧⌘N |
+| Close tab / reopen closed tab | ⌘W / ⇧⌘T |
+| Next / previous tab | ⌃Tab / ⌃⇧Tab |
+| Tab 1 to 8 / last tab | ⌘1 … ⌘8 / ⌘9 |
+| Find / next / previous | ⌘F / ⌘G / ⇧⌘G |
+| History | ⌘Y |
+| Copy URL | ⇧⌘C |
+| Zoom in / out / actual size | ⌘= / ⌘- / ⌘0 |
+| Stop loading | ⌘. |
+| Print | ⌘P |
+| Developer tools | ⌥⌘I |
 | New folder | ⌥⌘N |
 | Back / forward / reload | ⌘[ / ⌘] / ⌘R |
 | Add to favorites | ⌘D |
