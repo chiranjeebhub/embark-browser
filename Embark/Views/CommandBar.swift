@@ -1,19 +1,22 @@
 import SwiftUI
 
-/// ⌘T / ⌘L: one glass bar that switches tabs, opens favorites, or goes to a URL or search.
+/// ⌘T / ⌘L: one glass bar that switches tabs, opens favorites or pages from history, or goes
+/// to a URL or search.
 struct CommandBar: View {
     @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
     @State private var query = ""
     @State private var highlighted = 0
     @FocusState private var focused: Bool
 
     private enum Result: Identifiable {
-        case tab(BrowserTab), favorite(Favorite), go(URL), search(String)
+        case tab(BrowserTab), favorite(Favorite), history(HistoryEntry), go(URL), search(String)
 
         var id: String {
             switch self {
             case .tab(let t): "tab-\(t.id)"
             case .favorite(let f): "fav-\(f.id)"
+            case .history(let h): "history-\(h.id)"
             case .go(let u): "go-\(u)"
             case .search(let q): "search-\(q)"
             }
@@ -30,6 +33,12 @@ struct CommandBar: View {
         out += tabs.prefix(5).map(Result.tab)
         let favs = space.favorites.filter { !lower.isEmpty && $0.title.lowercased().contains(lower) }
         out += favs.prefix(3).map(Result.favorite)
+        if !lower.isEmpty {
+            // Pages already open as a tab or favorite show up above instead.
+            let open = Set(space.tabs.map(\.url) + space.favorites.map(\.url))
+            let visited = pool.history.search(q, profileID: space.profileID, limit: 12).filter { !open.contains($0.url) }
+            out += visited.prefix(5).map(Result.history)
+        }
         if !q.isEmpty { out.append(.search(q)) }
         return out
     }
@@ -79,6 +88,9 @@ struct CommandBar: View {
             case .favorite(let fav):
                 FaviconView(url: fav.url, size: 22)
                 label(fav.title, detail: "Favorite")
+            case .history(let entry):
+                FaviconView(url: entry.url, size: 22)
+                label(entry.title, detail: entry.url.host() ?? "History")
             case .go(let url):
                 Image(systemName: "globe").frame(width: 22)
                 label(url.absoluteString, detail: "Open")
@@ -108,6 +120,7 @@ struct CommandBar: View {
         switch all[index] {
         case .tab(let tab): store.selectTab(tab.id)
         case .favorite(let fav): store.selectFavorite(fav.id)
+        case .history(let entry): store.openTab(entry.url, title: entry.title)
         case .go(let url): store.openTab(url)
         case .search(let q):
             var components = URLComponents(string: "https://www.google.com/search")!

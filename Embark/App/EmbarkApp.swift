@@ -18,6 +18,13 @@ struct EmbarkApp: App {
         .windowToolbarStyle(.unifiedCompact)
         .commands { BrowserCommands(store: store, pool: pool) }
 
+        Window("History", id: "history") {
+            HistoryView()
+                .environment(store)
+                .environment(pool)
+        }
+        .defaultSize(width: 640, height: 560)
+
         Settings {
             SettingsView()
                 .environment(store)
@@ -61,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct BrowserCommands: Commands {
     let store: BrowserStore
     let pool: PagePool
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -100,6 +108,10 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("[", modifiers: [.control, .shift])
             Button("Next Pane") { store.focusPane(offset: 1) }
                 .keyboardShortcut("]", modifiers: [.control, .shift])
+        }
+        CommandMenu("History") {
+            Button("Show All History") { openWindow(id: "history") }
+                .keyboardShortcut("y")
         }
         CommandMenu("Spaces") {
             Button("Next Space") { store.selectSpace(offset: 1) }

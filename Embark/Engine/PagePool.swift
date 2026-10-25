@@ -10,6 +10,11 @@ final class PagePool: BrowserPageDelegate {
     @ObservationIgnored private var pages: [BrowserTab.ID: BrowserPage] = [:]
     @ObservationIgnored private var tabIDs: [ObjectIdentifier: BrowserTab.ID] = [:]
     @ObservationIgnored weak var store: BrowserStore?
+    /// Pages visited, per profile.
+    let history = HistoryStore()
+    /// Each open page's profile and the address last recorded for it.
+    @ObservationIgnored private var pageProfiles: [BrowserTab.ID: Profile.ID] = [:]
+    @ObservationIgnored private var recordedURLs: [BrowserTab.ID: URL] = [:]
     @ObservationIgnored private var suspendedDropTypes: [(NSView, [NSPasteboard.PasteboardType])] = []
     /// Bumped when navigation state changes so toolbar buttons refresh.
     private(set) var revision = 0
@@ -49,6 +54,7 @@ final class PagePool: BrowserPageDelegate {
         page.delegate = self
         pages[tab.id] = page
         tabIDs[ObjectIdentifier(page)] = tab.id
+        pageProfiles[tab.id] = profile.id
         return page
     }
 
@@ -89,8 +95,11 @@ final class PagePool: BrowserPageDelegate {
         }
     }
 
-    /// Deletes a removed profile's data from disk.
-    func removeData(for profile: Profile) { engine.removeData(for: profile) }
+    /// Deletes a removed profile's data from disk, and its history.
+    func removeData(for profile: Profile) {
+        engine.removeData(for: profile)
+        history.removeProfile(profile.id)
+    }
 
     // MARK: Find
 
@@ -127,6 +136,8 @@ final class PagePool: BrowserPageDelegate {
     func close(_ id: BrowserTab.ID) {
         if findTabID == id { findTabID = nil; findResult = nil }
         if fullscreenTabID == id { fullscreenTabID = nil }
+        pageProfiles[id] = nil
+        recordedURLs[id] = nil
         guard let page = pages.removeValue(forKey: id) else { return }
         tabIDs[ObjectIdentifier(page)] = nil
         page.close()
@@ -176,7 +187,19 @@ final class PagePool: BrowserPageDelegate {
     func page(_ page: BrowserPage, didChangeTitle title: String?, url: URL?) {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
         store?.updateTab(id, title: title, url: url)
+        recordHistory(for: id, title: title, url: url)
         revision += 1
+    }
+
+    /// A new address is a visit; a new title for the same address only renames it.
+    private func recordHistory(for id: BrowserTab.ID, title: String?, url: URL?) {
+        guard let url, let profileID = pageProfiles[id] else { return }
+        if recordedURLs[id] == url {
+            if let title { history.updateTitle(title, for: url, profileID: profileID) }
+        } else {
+            recordedURLs[id] = url
+            history.recordVisit(to: url, title: title, profileID: profileID)
+        }
     }
 
     func page(_ page: BrowserPage, requestsNewTab url: URL) {
