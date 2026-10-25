@@ -15,6 +15,19 @@ protocol BrowserEngine: AnyObject {
     /// and `update` reports each change.
     func observeDownloads(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void)
     func cancelDownload(_ id: Download.ID)
+
+    // Settings ▸ Privacy and Settings ▸ Profiles.
+    /// Whether third-party cookies can be blocked and saved site permissions listed.
+    var supportsSiteSettings: Bool { get }
+    func setBlocksThirdPartyCookies(_ block: Bool)
+    func siteExceptions(for profile: Profile) -> [SiteException]
+    /// Forgets a site's saved permission, so the site asks again.
+    func resetSiteException(_ exception: SiteException, for profile: Profile)
+    /// Data that open pages hold on to, so it's removed the next time Embark starts.
+    var browsingDataClearedAtLaunch: BrowsingData { get }
+    /// Clears a profile's browsing data, apart from `browsingDataClearedAtLaunch`, which is
+    /// queued for the next launch.
+    func clearBrowsingData(_ data: BrowsingData, for profile: Profile, completion: @escaping @MainActor () -> Void)
 }
 
 extension BrowserEngine {
@@ -22,6 +35,20 @@ extension BrowserEngine {
     func extensions(for profile: Profile) -> [InstalledExtension] { [] }
     func observeDownloads(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void) {}
     func cancelDownload(_ id: Download.ID) {}
+    var supportsSiteSettings: Bool { false }
+    func setBlocksThirdPartyCookies(_ block: Bool) {}
+    func siteExceptions(for profile: Profile) -> [SiteException] { [] }
+    func resetSiteException(_ exception: SiteException, for profile: Profile) {}
+    var browsingDataClearedAtLaunch: BrowsingData { [] }
+}
+
+/// What Clear Browsing Data removes from a profile.
+struct BrowsingData: OptionSet {
+    let rawValue: Int
+    static let cookies = BrowsingData(rawValue: 1 << 0)
+    static let cache = BrowsingData(rawValue: 1 << 1)
+    /// Local storage, IndexedDB, service workers and other site data.
+    static let storage = BrowsingData(rawValue: 1 << 2)
 }
 
 @MainActor
@@ -144,6 +171,22 @@ enum SitePermission: Int, CaseIterable, Identifiable {
     }
 
     /// Prompt wording: "wants to use your camera".
+    /// Chromium's name for the content setting, as saved in a profile's Preferences.
+    var chromiumName: String {
+        switch self {
+        case .camera: "media_stream_camera"
+        case .microphone: "media_stream_mic"
+        case .notifications: "notifications"
+        case .sound: "sound"
+        case .autoPictureInPicture: "auto_picture_in_picture"
+        }
+    }
+
+    init?(chromiumName: String) {
+        guard let match = Self.allCases.first(where: { $0.chromiumName == chromiumName }) else { return nil }
+        self = match
+    }
+
     var ask: String {
         switch self {
         case .camera: "use your camera"

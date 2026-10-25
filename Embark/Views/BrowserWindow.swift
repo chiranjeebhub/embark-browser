@@ -16,8 +16,21 @@ struct BrowserWindow: View {
     /// The window went full screen because a video did, so it leaves full screen with it.
     @State private var enteredFullScreenForPage = false
 
-    /// How far the peeking sidebar's card sits from the window's top, left and bottom edges.
+    @AppStorage(PreferenceKey.sidebarSide) private var sidebarSide = SidebarSide.left
+    @AppStorage(PreferenceKey.peeksAtEdge) private var peeksAtEdge = true
+
+    /// How far the peeking sidebar's card sits from the window's top, side and bottom edges.
     static let peekInset: CGFloat = 8
+    /// Above the page when the sidebar is on the right: room for the traffic lights.
+    static let titleStripHeight: CGFloat = 30
+
+    private var sidebarEdge: Edge { sidebarSide == .right ? .trailing : .leading }
+
+    private var pinnedSidebar: some View {
+        Sidebar()
+            .frame(width: 264)
+            .transition(.move(edge: sidebarEdge).combined(with: .opacity))
+    }
 
     var body: some View {
         // The Create a Space form previews its theme on the whole window; a swipe between
@@ -27,12 +40,10 @@ struct BrowserWindow: View {
             ? store.neighborSpace(towardProgress: store.swipeProgress)?.resolvedTheme : nil
         let tint = theme.accent
         let isPageFullscreen = self.isPageFullscreen
+        let onRight = sidebarSide == .right
+        let showsSidebar = store.isSidebarVisible && !isPageFullscreen
         HStack(spacing: 0) {
-            if store.isSidebarVisible && !isPageFullscreen {
-                Sidebar()
-                    .frame(width: 264)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
+            if showsSidebar && !onRight { pinnedSidebar }
             // The page keeps the same top edge whether or not the sidebar is shown.
             content
                 .overlay {
@@ -48,12 +59,15 @@ struct BrowserWindow: View {
                 }
                 .clipShape(.rect(cornerRadius: isPageFullscreen ? 0 : 12))
                 .shadow(color: .black.opacity(isPageFullscreen ? 0 : 0.12), radius: 12, y: 4)
-                .padding(.vertical, isPageFullscreen ? 0 : 8)
-                .padding(.trailing, isPageFullscreen ? 0 : 8)
-                .padding(.leading, store.isSidebarVisible || isPageFullscreen ? 0 : 8)
+                // With the sidebar on the right, the traffic lights get a strip above the page.
+                .padding(.top, isPageFullscreen ? 0 : (onRight ? Self.titleStripHeight : 8))
+                .padding(.bottom, isPageFullscreen ? 0 : 8)
+                .padding(.leading, isPageFullscreen || (showsSidebar && !onRight) ? 0 : 8)
+                .padding(.trailing, isPageFullscreen || (showsSidebar && onRight) ? 0 : 8)
+            if showsSidebar && onRight { pinnedSidebar }
         }
-        .overlay(alignment: .leading) {
-            if !store.isSidebarVisible && !isPageFullscreen { peekingSidebar(tint: tint) }
+        .overlay(alignment: onRight ? .trailing : .leading) {
+            if !store.isSidebarVisible && peeksAtEdge && !isPageFullscreen { peekingSidebar(tint: tint) }
         }
         .background(WindowReader(window: $window))
         .onChange(of: isPageFullscreen) { _, fullscreen in setWindowFullScreen(fullscreen) }
@@ -65,8 +79,9 @@ struct BrowserWindow: View {
         }
         .onChange(of: store.selectedTab?.id) { if pool.findTabID != nil { pool.closeFind() } }
         .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false }
-        // While peeking, the card draws its own traffic lights (see CardTrafficLights).
-        .background(WindowButtons(isVisible: store.isSidebarVisible))
+        // While peeking, the card draws its own traffic lights (see CardTrafficLights). With the
+        // sidebar on the right they stay above the page.
+        .background(WindowButtons(isVisible: store.isSidebarVisible || onRight))
         .background {
             ZStack {
                 ThemeBackground(theme: theme)
@@ -118,7 +133,7 @@ struct BrowserWindow: View {
         }
     }
 
-    /// A strip along the left edge; hovering it floats the sidebar over the page, which stays put.
+    /// A strip along the sidebar's edge; hovering it floats the sidebar over the page, which stays put.
     @ViewBuilder private func peekingSidebar(tint: Color) -> some View {
         if isPeeking {
             // A card inset from the window. The sidebar inside keeps its usual margins and width,
@@ -136,11 +151,13 @@ struct BrowserWindow: View {
                 }
                 .overlay(alignment: .topLeading) {
                     // Where the system lights sit relative to the window, but relative to the card.
-                    CardTrafficLights().padding(.leading, 9).padding(.top, 9)
+                    // On the right, the system's own stay above the page.
+                    if sidebarSide == .left { CardTrafficLights().padding(.leading, 9).padding(.top, 9) }
                 }
-                .padding([.top, .bottom, .leading], Self.peekInset)
+                .padding([.top, .bottom], Self.peekInset)
+                .padding(sidebarEdge == .leading ? .leading : .trailing, Self.peekInset)
                 .onHover(perform: peek)
-                .transition(.move(edge: .leading).combined(with: .opacity))
+                .transition(.move(edge: sidebarEdge).combined(with: .opacity))
         } else {
             Color.clear.frame(width: 8).frame(maxHeight: .infinity).contentShape(.rect)
                 .onHover { hovering in if hovering { peek(true) } }
@@ -269,6 +286,7 @@ struct BrowserWindow: View {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(60))
             pool.sleepIdle(spaces: store.spaces, visible: visibleTabIDs, idle: 30 * 60)
+            for id in store.archiveIdleTabs(keeping: visibleTabIDs) { pool.close(id) }
         }
     }
 }

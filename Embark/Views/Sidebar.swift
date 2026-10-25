@@ -62,10 +62,13 @@ struct Sidebar: View {
 private struct SpaceContent: View {
     let space: Space
     @Environment(BrowserStore.self) private var store
+    @AppStorage(PreferenceKey.showsAddressPill) private var showsAddressPill = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            AddressPill(tab: space.pageTab(space.selectedTabID), profile: store.profile(for: space))
+            if showsAddressPill {
+                AddressPill(tab: space.pageTab(space.selectedTabID), profile: store.profile(for: space))
+            }
             FavoritesGrid(favorites: space.favorites)
             Divider().padding(.horizontal, 8)
             TabList(space: space)
@@ -111,6 +114,7 @@ private struct SidebarIconButtonStyle: ButtonStyle {
 private struct NavigationRow: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
+    @AppStorage(PreferenceKey.sidebarSide) private var sidebarSide = SidebarSide.left
 
     var body: some View {
         let page = pool.existingPage(for: store.selectedTab?.id)
@@ -118,7 +122,7 @@ private struct NavigationRow: View {
         // Shares the title bar row with the traffic lights, on their center line (15.5pt).
         HStack(spacing: 10) {
             Button { withAnimation(.sidebar) { store.isSidebarVisible.toggle() } } label: {
-                Image(systemName: "sidebar.left")
+                Image(systemName: sidebarSide == .left ? "sidebar.left" : "sidebar.right")
             }
             .help(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
             Spacer()
@@ -138,8 +142,8 @@ private struct NavigationRow: View {
         .buttonStyle(SidebarIconButtonStyle())
         .frame(height: 31)
         // The toggle's glyph starts ~12pt after the last traffic light (which ends at ~67pt);
-        // reload's glyph ends on the URL pill's right edge.
-        .padding(.leading, 64)
+        // reload's glyph ends on the URL pill's right edge. On the right, there are no lights.
+        .padding(.leading, sidebarSide == .left ? 64 : -5)
         .padding(.trailing, -5)
     }
 }
@@ -1115,7 +1119,7 @@ private struct BottomBar: View {
             }
             .animation(.snappy(duration: 0.2), value: pool.downloads.isEmpty)
             Spacer(minLength: 8)
-            HStack(spacing: 16) {
+            HStack(spacing: 8) {
                 // The active marker moves across during a swipe.
                 let progress = store.swipeProgress
                 let neighbor = store.neighborSpace(towardProgress: progress)?.id
@@ -1137,7 +1141,7 @@ private struct BottomBar: View {
     }
 }
 
-/// A space as a plain glyph: its symbol, or its first letter. The active one is tinted.
+/// A space as a plain glyph: its symbol, or its first letter. The active one is highlighted.
 private struct SpaceGlyph: View {
     let space: Space
     /// 1 for the active space; between 0 and 1 while a swipe moves to or from it.
@@ -1152,10 +1156,16 @@ private struct SpaceGlyph: View {
     var body: some View {
         Button { store.selectSpace(space.id) } label: {
             ZStack {
-                glyph.foregroundStyle(.primary.opacity(hovering ? 0.7 : 0.35)).opacity(1 - activeAmount)
-                glyph.foregroundStyle(space.accent).opacity(activeAmount)
+                // Like Arc: the active space sits on a soft glass tile in full strength; the
+                // others are dimmed. The theme color alone was too close to the sidebar's tint.
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.primary.opacity(0.16))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+                    .opacity(activeAmount)
+                glyph.foregroundStyle(.primary.opacity(hovering ? 0.65 : 0.35)).opacity(1 - activeAmount)
+                glyph.foregroundStyle(.primary).opacity(activeAmount)
             }
-            .frame(width: 22, height: 24)
+            .frame(width: 30, height: 28)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

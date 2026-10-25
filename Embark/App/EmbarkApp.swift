@@ -7,9 +7,14 @@ struct EmbarkApp: App {
     @State private var store = BrowserStore(isWindow: false)
     @State private var pool = PagePool()
 
+    init() {
+        UserDefaults.standard.register(defaults: [PreferenceKey.showsAddressPill: true, PreferenceKey.peeksAtEdge: true])
+    }
+
     var body: some Scene {
         WindowGroup(id: "browser") {
-            BrowserWindowRoot()
+            // Links from other apps open in the browser window that was in front last.
+            BrowserWindowRoot { appDelegate.store = $0 }
                 .environment(pool)
                 .frame(minWidth: 900, minHeight: 560)
         }
@@ -40,7 +45,12 @@ struct EmbarkApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Links from other apps open here once the window is up; until then they wait.
+    weak var store: BrowserStore? { didSet { openPendingURLs() } }
+    private var pendingURLs: [URL] = []
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Chromium locks its profile folders, so a second copy of Embark can't start it. Hand
         // over to the copy that's already running instead.
@@ -48,10 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             running.activate()
             exit(0)
         }
+        // Links clicked in other apps while Embark is the default browser. Handled here rather
+        // than by SwiftUI, which would open a new window for each.
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleGetURL(_:reply:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass),
+                                                     andEventID: AEEventID(kAEGetURL))
         #if ENGINE_CEF
+        CEFEngine.clearDataBeforeLaunch()
         if !EMBCEFRuntime.start(withCacheRoot: CEFEngine.cacheRoot) {
             NSLog("Embark: Chromium failed to start")
         }
+        EMBCEFRuntime.setBlocksThirdPartyCookies(UserDefaults.standard.bool(forKey: PreferenceKey.blocksThirdPartyCookies))
         #endif
     }
 
@@ -61,6 +78,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let me = ProcessInfo.processInfo.processIdentifier
         return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .first { $0.processIdentifier != me && !$0.isTerminated }
+    }
+
+    @objc private func handleGetURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        guard let text = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return }
+        pendingURLs.append(url)
+        openPendingURLs()
+    }
+
+    private func openPendingURLs() {
+        guard let store, !pendingURLs.isEmpty else { return }
+        store.isCreatingSpace = false
+        for url in pendingURLs { store.openTab(url) }
+        pendingURLs = []
+        NSApp.activate()
     }
 
     #if ENGINE_CEF
@@ -91,17 +124,20 @@ struct BrowserWindowRoot: View {
     @Environment(PagePool.self) private var pool
     @Environment(\.controlActiveState) private var activeState
     @State private var store: BrowserStore
+    /// Called when the window comes to the front.
+    private let onActivate: (BrowserStore) -> Void
 
-    init(isPrivate: Bool = false) {
+    init(isPrivate: Bool = false, onActivate: @escaping (BrowserStore) -> Void = { _ in }) {
         _store = State(initialValue: isPrivate ? .privateWindow() : .forNewWindow())
+        self.onActivate = onActivate
     }
 
     var body: some View {
         BrowserWindow()
             .environment(store)
             .focusedSceneValue(\.browserStore, store)
-            .onAppear { pool.activate(store) }
-            .onChange(of: activeState) { if activeState == .key { pool.activate(store) } }
+            .onAppear(perform: activate)
+            .onChange(of: activeState) { if activeState == .key { activate() } }
             // Named after its space in the Window menu and Mission Control.
             .navigationTitle(store.isPrivate ? "Private Window" : store.selectedSpace?.name ?? "Embark")
             .onDisappear {
@@ -114,6 +150,13 @@ struct BrowserWindowRoot: View {
                 // Another window deleted this window's space.
                 if store.selectedSpace == nil, let first = store.spaces.first { store.selectSpace(first.id) }
             }
+    }
+}
+
+extension BrowserWindowRoot {
+    private func activate() {
+        pool.activate(store)
+        onActivate(store)
     }
 }
 

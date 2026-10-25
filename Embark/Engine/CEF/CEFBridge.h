@@ -108,6 +108,18 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 + (void)cancel:(uint32_t)identifier;
 @end
 
+/// Settings ▸ Privacy and Clear Browsing Data.
+@interface EMBCEFRuntime (Settings)
+/// Blocks or allows third-party cookies in every profile, including ones opened later.
++ (void)setBlocksThirdPartyCookies:(BOOL)block;
+/// Deletes every cookie in a profile, then calls `completion` on the main thread.
++ (void)deleteCookiesInProfileDirectory:(NSURL *)directory completion:(void (^)(void))completion
+    NS_SWIFT_NAME(deleteCookies(inProfileDirectory:completion:));
+/// Forgets a site's saved setting for a permission, so it asks again.
++ (void)resetPermission:(EMBSitePermission)permission origin:(NSString *)origin profileDirectory:(NSURL *)directory
+    NS_SWIFT_NAME(resetPermission(_:origin:profileDirectory:));
+@end
+
 /// One Chromium browser (tab). `profileDirectory` keeps its cookies and logins apart.
 @interface EMBCEFBrowser : NSObject
 - (instancetype)initWithURL:(NSURL *)url profileDirectory:(NSURL *)profileDirectory;

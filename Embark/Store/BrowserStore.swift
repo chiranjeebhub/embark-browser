@@ -36,7 +36,8 @@ final class BrowserStore {
     /// in the tab list unless it's opened as a tab.
     var peekTab: BrowserTab?
 
-    static let recentlyClosedLimit = 20
+    /// Archived tabs go here too, so it keeps more than a handful.
+    static let recentlyClosedLimit = 100
 
     static let supportDirectory: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -456,7 +457,9 @@ final class BrowserStore {
     }
 
     /// A preset no space uses yet, so a new space stands apart; the first preset if all are used.
+    /// Settings can make it start from the current space's theme instead.
     func suggestedTheme() -> SpaceTheme {
+        if NewSpaceTheme.current() == .current, let theme = selectedSpace?.resolvedTheme { return theme }
         let used = Set(spaces.map(\.resolvedTheme.colors))
         return (ThemePreset.all.first { !used.contains($0.theme.colors) } ?? ThemePreset.all[0]).theme
     }
@@ -486,6 +489,29 @@ final class BrowserStore {
         let removed = spaces.remove(at: i)
         if selectedSpaceID == id { selectedSpaceID = spaces[max(i - 1, 0)].id }
         return removed.pageIDs
+    }
+
+    /// Archives every space's loose tabs not opened within Settings' "Archive tabs after".
+    /// Returns them so their pages can be closed.
+    func archiveIdleTabs(keeping visible: Set<BrowserTab.ID>) -> [BrowserTab.ID] {
+        guard let interval = ArchiveAfter.current().interval else { return [] }
+        let cutoff = Date.now.addingTimeInterval(-interval)
+        var archived: [BrowserTab.ID] = []
+        // Only spaces with something to archive are written, so idle checks don't save.
+        for i in spaces.indices {
+            var space = spaces[i]
+            let ids = space.archiveTabs(openedBefore: cutoff, keeping: visible, limit: Self.recentlyClosedLimit)
+            if !ids.isEmpty { spaces[i] = space; archived += ids }
+        }
+        return archived
+    }
+
+    /// Adds imported bookmarks to a space as a collapsed folder of unloaded tabs.
+    @discardableResult
+    func importBookmarks(_ root: ImportedFolder, into id: Space.ID) -> Int {
+        var count = 0
+        updateSpace(id) { count = $0.importBookmarks(root) }
+        return count
     }
 
     // MARK: Profiles
