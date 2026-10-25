@@ -6,13 +6,20 @@ struct EmbarkApp: App {
     @State private var store = BrowserStore()
     @State private var pool = PagePool()
 
+    init() {
+        UserDefaults.standard.register(defaults: [PreferenceKey.showsAddressPill: true, PreferenceKey.peeksAtEdge: true])
+    }
+
     var body: some Scene {
         WindowGroup {
             BrowserWindow()
                 .environment(store)
                 .environment(pool)
                 .frame(minWidth: 900, minHeight: 560)
-                .onAppear { pool.store = store }
+                .onAppear {
+                    pool.store = store
+                    appDelegate.store = store
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
@@ -26,13 +33,41 @@ struct EmbarkApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Links from other apps open here once the window is up; until then they wait.
+    weak var store: BrowserStore? { didSet { openPendingURLs() } }
+    private var pendingURLs: [URL] = []
+
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Links clicked in other apps while Embark is the default browser. Handled here rather
+        // than by SwiftUI, which would open a new window for each.
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleGetURL(_:reply:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass),
+                                                     andEventID: AEEventID(kAEGetURL))
         #if ENGINE_CEF
+        CEFEngine.clearDataBeforeLaunch()
         if !EMBCEFRuntime.start(withCacheRoot: CEFEngine.cacheRoot) {
             NSLog("Embark: Chromium failed to start")
         }
+        EMBCEFRuntime.setBlocksThirdPartyCookies(UserDefaults.standard.bool(forKey: PreferenceKey.blocksThirdPartyCookies))
         #endif
+    }
+
+    @objc private func handleGetURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        guard let text = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return }
+        pendingURLs.append(url)
+        openPendingURLs()
+    }
+
+    private func openPendingURLs() {
+        guard let store, !pendingURLs.isEmpty else { return }
+        store.isCreatingSpace = false
+        for url in pendingURLs { store.openTab(url) }
+        pendingURLs = []
+        NSApp.activate()
     }
 
     #if ENGINE_CEF

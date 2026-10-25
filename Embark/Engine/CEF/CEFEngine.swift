@@ -20,6 +20,78 @@ final class CEFEngine: BrowserEngine {
         try? FileManager.default.removeItem(at: directory(for: profile))
     }
 
+    // MARK: Site settings and browsing data
+
+    var supportsSiteSettings: Bool { true }
+
+    func setBlocksThirdPartyCookies(_ block: Bool) { EMBCEFRuntime.setBlocksThirdPartyCookies(block) }
+
+    func siteExceptions(for profile: Profile) -> [SiteException] {
+        guard let data = try? Data(contentsOf: directory(for: profile).appending(path: "Preferences")) else { return [] }
+        return ChromiumPreferences.siteExceptions(data, contentTypes: SitePermission.allCases.map(\.chromiumName))
+    }
+
+    func resetSiteException(_ exception: SiteException, for profile: Profile) {
+        guard let permission = SitePermission(chromiumName: exception.contentType),
+              let kind = EMBSitePermission(rawValue: permission.rawValue) else { return }
+        EMBCEFRuntime.resetPermission(kind, origin: exception.origin, profileDirectory: directory(for: profile))
+    }
+
+    /// Chromium keeps its cache and site storage open while it runs.
+    var browsingDataClearedAtLaunch: BrowsingData { [.cache, .storage] }
+
+    func clearBrowsingData(_ data: BrowsingData, for profile: Profile, completion: @escaping @MainActor () -> Void) {
+        let later = data.intersection(browsingDataClearedAtLaunch)
+        if !later.isEmpty {
+            var pending = Self.pendingClears
+            pending[profile.id.uuidString] = (pending[profile.id.uuidString] ?? 0) | later.rawValue
+            Self.pendingClears = pending
+        }
+        guard data.contains(.cookies) else { completion(); return }
+        EMBCEFRuntime.deleteCookies(inProfileDirectory: directory(for: profile)) {
+            MainActor.assumeIsolated { completion() }
+        }
+    }
+
+    /// Profile id to the `BrowsingData` queued for the next launch.
+    private static var pendingClears: [String: Int] {
+        get { UserDefaults.standard.dictionary(forKey: "pendingBrowsingDataClears") as? [String: Int] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "pendingBrowsingDataClears") }
+    }
+
+    /// Before Chromium starts: removes data queued by Clear Browsing Data, and with "Start
+    /// every session signed out" every profile's cookies and site storage.
+    static func clearDataBeforeLaunch() {
+        let files = FileManager.default
+        let signsOut = UserDefaults.standard.bool(forKey: PreferenceKey.signsOutAtLaunch)
+        let pending = pendingClears
+        let profiles = (try? files.contentsOfDirectory(at: cacheRoot, includingPropertiesForKeys: nil)) ?? []
+        for directory in profiles where directory.lastPathComponent.hasPrefix("Profile-") {
+            let id = String(directory.lastPathComponent.dropFirst("Profile-".count))
+            var data = BrowsingData(rawValue: pending[id] ?? 0)
+            if signsOut { data.formUnion([.cookies, .storage]) }
+            for path in paths(for: data) { try? files.removeItem(at: directory.appending(path: path)) }
+        }
+        UserDefaults.standard.removeObject(forKey: "pendingBrowsingDataClears")
+    }
+
+    /// Where Chromium keeps each kind of data inside a profile folder.
+    private static func paths(for data: BrowsingData) -> [String] {
+        var paths: [String] = []
+        if data.contains(.cookies) {
+            paths += ["Cookies", "Cookies-journal", "Network/Cookies", "Network/Cookies-journal"]
+        }
+        if data.contains(.cache) {
+            paths += ["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache",
+                      "Service Worker/CacheStorage", "Service Worker/ScriptCache"]
+        }
+        if data.contains(.storage) {
+            paths += ["Local Storage", "Session Storage", "IndexedDB", "databases", "File System", "Service Worker",
+                      "WebStorage", "Shared Dictionary", "shared_proto_db", "blob_storage"]
+        }
+        return paths
+    }
+
     /// Chromium's profile folder: cookies, logins and extensions, apart from other profiles.
     private func directory(for profile: Profile) -> URL {
         Self.cacheRoot.appending(path: "Profile-\(profile.id.uuidString)", directoryHint: .isDirectory)
