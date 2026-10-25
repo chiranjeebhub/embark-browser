@@ -11,6 +11,8 @@
 #include "include/cef_ssl_status.h"
 #include "include/cef_x509_certificate.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
+#include "include/cef_values.h"
 #include "include/wrapper/cef_library_loader.h"
 
 #include <algorithm>
@@ -346,22 +348,77 @@ private:
     IMPLEMENT_REFCOUNTING(EmbarkClient);
 };
 
+// Settings ▸ Privacy ▸ Block third-party cookies, applied to every profile.
+bool gBlocksThirdPartyCookies = false;
+
+void ApplyCookiePreference(CefRefPtr<CefRequestContext> context) {
+    // 1 blocks third-party cookies, 0 allows them (Chrome's cookie_controls_mode).
+    auto value = CefValue::Create();
+    value->SetInt(gBlocksThirdPartyCookies ? 1 : 0);
+    CefString error;
+    if (context->CanSetPreference("profile.cookie_controls_mode")) {
+        context->SetPreference("profile.cookie_controls_mode", value, error);
+    }
+}
+
+// Preferences can only be set once a context has finished starting.
+class ContextHandler : public CefRequestContextHandler {
+public:
+    void OnRequestContextInitialized(CefRefPtr<CefRequestContext> context) override { ApplyCookiePreference(context); }
+
+private:
+    IMPLEMENT_REFCOUNTING(ContextHandler);
+};
+
+std::map<std::string, CefRefPtr<CefRequestContext>> gContexts;
+
 // One request context per profile directory, shared by every tab in that profile.
 CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
-    static std::map<std::string, CefRefPtr<CefRequestContext>> contexts;
     std::string key = directory.path.UTF8String;
-    auto found = contexts.find(key);
-    if (found != contexts.end()) return found->second;
+    auto found = gContexts.find(key);
+    if (found != gContexts.end()) return found->second;
     [[NSFileManager defaultManager] createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:nil];
     CefRequestContextSettings settings;
     CefString(&settings.cache_path) = key;
     settings.persist_session_cookies = true;
-    auto context = CefRequestContext::CreateContext(settings, nullptr);
-    contexts[key] = context;
+    auto context = CefRequestContext::CreateContext(settings, new ContextHandler());
+    gContexts[key] = context;
     return context;
 }
 
+/// Calls back on the main thread once cookies are deleted.
+class CookiesDeleted : public CefDeleteCookiesCallback {
+public:
+    explicit CookiesDeleted(void (^completion)(void)) : completion_(completion) {}
+    void OnComplete(int) override { dispatch_async(dispatch_get_main_queue(), completion_); }
+
+private:
+    void (^completion_)(void);
+    IMPLEMENT_REFCOUNTING(CookiesDeleted);
+};
+
 }  // namespace
+
+@implementation EMBCEFRuntime (Settings)
+
++ (void)setBlocksThirdPartyCookies:(BOOL)block {
+    gBlocksThirdPartyCookies = block;
+    for (auto &entry : gContexts) ApplyCookiePreference(entry.second);
+}
+
++ (void)deleteCookiesInProfileDirectory:(NSURL *)directory completion:(void (^)(void))completion {
+    auto manager = ContextForProfile(directory)->GetCookieManager(nullptr);
+    if (!manager || !manager->DeleteCookies(CefString(), CefString(), new CookiesDeleted(completion))) {
+        dispatch_async(dispatch_get_main_queue(), completion);
+    }
+}
+
++ (void)resetPermission:(EMBSitePermission)permission origin:(NSString *)origin profileDirectory:(NSURL *)directory {
+    CefString url = origin.UTF8String;
+    ContextForProfile(directory)->SetContentSetting(url, url, ContentType(permission), CEF_CONTENT_SETTING_VALUE_DEFAULT);
+}
+
+@end
 
 @implementation EMBCEFBrowser {
     NSView *_view;

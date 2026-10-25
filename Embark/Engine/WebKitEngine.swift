@@ -7,6 +7,18 @@ import WebKit
 final class WebKitEngine: BrowserEngine {
     private var stores: [Profile.ID: WKWebsiteDataStore] = [:]
 
+    init() {
+        // Settings ▸ Privacy ▸ Start every session signed out.
+        if UserDefaults.standard.bool(forKey: PreferenceKey.signsOutAtLaunch) {
+            let types = Self.types(for: [.cookies, .storage])
+            Task { @MainActor in
+                for id in await WKWebsiteDataStore.allDataStoreIdentifiers {
+                    await WKWebsiteDataStore(forIdentifier: id).removeData(ofTypes: types, modifiedSince: .distantPast)
+                }
+            }
+        }
+    }
+
     func makePage(url: URL, profile: Profile) -> BrowserPage {
         let store = stores[profile.id] ?? WKWebsiteDataStore(forIdentifier: profile.id)
         stores[profile.id] = store
@@ -16,6 +28,21 @@ final class WebKitEngine: BrowserEngine {
     func removeData(for profile: Profile) {
         stores[profile.id] = nil
         Task { try? await WKWebsiteDataStore.remove(forIdentifier: profile.id) }
+    }
+
+    func clearBrowsingData(_ data: BrowsingData, for profile: Profile, completion: @escaping @MainActor () -> Void) {
+        let store = stores[profile.id] ?? WKWebsiteDataStore(forIdentifier: profile.id)
+        store.removeData(ofTypes: Self.types(for: data), modifiedSince: .distantPast) { completion() }
+    }
+
+    private static func types(for data: BrowsingData) -> Set<String> {
+        let cookies: Set = [WKWebsiteDataTypeCookies]
+        let cache: Set = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache]
+        var types: Set<String> = []
+        if data.contains(.cookies) { types.formUnion(cookies) }
+        if data.contains(.cache) { types.formUnion(cache) }
+        if data.contains(.storage) { types.formUnion(WKWebsiteDataStore.allWebsiteDataTypes().subtracting(cookies).subtracting(cache)) }
+        return types
     }
 }
 

@@ -62,10 +62,13 @@ struct Sidebar: View {
 private struct SpaceContent: View {
     let space: Space
     @Environment(BrowserStore.self) private var store
+    @AppStorage(PreferenceKey.showsAddressPill) private var showsAddressPill = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            AddressPill(tab: space.pageTab(space.selectedTabID), profile: store.profile(for: space))
+            if showsAddressPill {
+                AddressPill(tab: space.pageTab(space.selectedTabID), profile: store.profile(for: space))
+            }
             FavoritesGrid(favorites: space.favorites)
             Divider().padding(.horizontal, 8)
             TabList(space: space)
@@ -111,6 +114,7 @@ private struct SidebarIconButtonStyle: ButtonStyle {
 private struct NavigationRow: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
+    @AppStorage(PreferenceKey.sidebarSide) private var sidebarSide = SidebarSide.left
 
     var body: some View {
         let page = pool.existingPage(for: store.selectedTab?.id)
@@ -118,7 +122,7 @@ private struct NavigationRow: View {
         // Shares the title bar row with the traffic lights, on their center line (15.5pt).
         HStack(spacing: 10) {
             Button { withAnimation(.sidebar) { store.isSidebarVisible.toggle() } } label: {
-                Image(systemName: "sidebar.left")
+                Image(systemName: sidebarSide == .left ? "sidebar.left" : "sidebar.right")
             }
             .help(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
             Spacer()
@@ -132,8 +136,8 @@ private struct NavigationRow: View {
         .buttonStyle(SidebarIconButtonStyle())
         .frame(height: 31)
         // The toggle's glyph starts ~12pt after the last traffic light (which ends at ~67pt);
-        // reload's glyph ends on the URL pill's right edge.
-        .padding(.leading, 64)
+        // reload's glyph ends on the URL pill's right edge. On the right, there are no lights.
+        .padding(.leading, sidebarSide == .left ? 64 : -5)
         .padding(.trailing, -5)
     }
 }
