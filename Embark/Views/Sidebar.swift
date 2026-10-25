@@ -62,10 +62,13 @@ struct Sidebar: View {
 private struct SpaceContent: View {
     let space: Space
     @Environment(BrowserStore.self) private var store
+    @AppStorage(PreferenceKey.showsAddressPill) private var showsAddressPill = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            AddressPill(tab: space.pageTab(space.selectedTabID), profile: store.profile(for: space))
+            if showsAddressPill {
+                AddressPill(tab: space.pageTab(space.selectedTabID), profile: store.profile(for: space))
+            }
             FavoritesGrid(favorites: space.favorites)
             Divider().padding(.horizontal, 8)
             TabList(space: space)
@@ -111,6 +114,7 @@ private struct SidebarIconButtonStyle: ButtonStyle {
 private struct NavigationRow: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
+    @AppStorage(PreferenceKey.sidebarSide) private var sidebarSide = SidebarSide.left
 
     var body: some View {
         let page = pool.existingPage(for: store.selectedTab?.id)
@@ -118,7 +122,7 @@ private struct NavigationRow: View {
         // Shares the title bar row with the traffic lights, on their center line (15.5pt).
         HStack(spacing: 10) {
             Button { withAnimation(.sidebar) { store.isSidebarVisible.toggle() } } label: {
-                Image(systemName: "sidebar.left")
+                Image(systemName: sidebarSide == .left ? "sidebar.left" : "sidebar.right")
             }
             .help(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
             Spacer()
@@ -132,8 +136,8 @@ private struct NavigationRow: View {
         .buttonStyle(SidebarIconButtonStyle())
         .frame(height: 31)
         // The toggle's glyph starts ~12pt after the last traffic light (which ends at ~67pt);
-        // reload's glyph ends on the URL pill's right edge.
-        .padding(.leading, 64)
+        // reload's glyph ends on the URL pill's right edge. On the right, there are no lights.
+        .padding(.leading, sidebarSide == .left ? 64 : -5)
         .padding(.trailing, -5)
     }
 }
@@ -1121,7 +1125,7 @@ private struct BottomBar: View {
                 .help("Library")
                 .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
             Spacer(minLength: 8)
-            HStack(spacing: 16) {
+            HStack(spacing: 8) {
                 // The active marker moves across during a swipe.
                 let progress = store.swipeProgress
                 let neighbor = store.neighborSpace(towardProgress: progress)?.id
@@ -1143,45 +1147,62 @@ private struct BottomBar: View {
     }
 }
 
-/// A space as a plain glyph: its symbol, or its first letter. The active one is tinted.
+/// A space as a plain glyph: its symbol, or its first letter. The active one is highlighted.
 private struct SpaceGlyph: View {
     let space: Space
     /// 1 for the active space; between 0 and 1 while a swipe moves to or from it.
     let activeAmount: CGFloat
     @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
+    @Environment(\.openSettings) private var openSettings
     @State private var hovering = false
+    @State private var showsEditor = false
+    @State private var confirmsDelete = false
 
     var body: some View {
         Button { store.selectSpace(space.id) } label: {
             ZStack {
-                glyph.foregroundStyle(.primary.opacity(hovering ? 0.7 : 0.35)).opacity(1 - activeAmount)
-                glyph.foregroundStyle(space.tint.color).opacity(activeAmount)
+                // Like Arc: the active space sits on a soft glass tile in full strength; the
+                // others are dimmed. The theme color alone was too close to the sidebar's tint.
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.primary.opacity(0.16))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+                    .opacity(activeAmount)
+                glyph.foregroundStyle(.primary.opacity(hovering ? 0.65 : 0.35)).opacity(1 - activeAmount)
+                glyph.foregroundStyle(.primary).opacity(activeAmount)
             }
-            .font(.system(size: 15))
-            .frame(width: 22, height: 24)
+            .frame(width: 30, height: 28)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(space.name)
         .contextMenu {
-            Menu("Icon") {
-                Button("First Letter") { store.setIcon(nil, for: space.id) }
-                Divider()
-                ForEach(SpaceIcon.choices, id: \.self) { symbol in
-                    Button { store.setIcon(symbol, for: space.id) } label: { Image(systemName: symbol) }
-                }
+            Button("Edit Space…") { showsEditor = true }
+            Picker("Profile", selection: Binding(get: { space.profileID }, set: { id in
+                for page in store.setProfile(id, for: space.id) { pool.close(page) }
+            })) {
+                ForEach(store.profiles) { profile in Text(profile.name).tag(profile.id) }
             }
+            .pickerStyle(.menu)
+            Button("Edit Profiles…") { openSettings() }
+            Divider()
+            Button("Delete Space…", role: .destructive) { confirmsDelete = true }
+                .disabled(store.spaces.count < 2)
+        }
+        .popover(isPresented: $showsEditor, arrowEdge: .top) { EditSpacePopover(spaceID: space.id) }
+        .confirmationDialog("Delete “\(space.name)”?", isPresented: $confirmsDelete) {
+            Button("Delete Space", role: .destructive) {
+                for page in store.deleteSpace(space.id) { pool.close(page) }
+            }
+        } message: {
+            Text("Its tabs, folders and favorites are removed. Its profile and logins stay.")
         }
         .animation(.snappy(duration: 0.15), value: hovering)
     }
 
-    @ViewBuilder private var glyph: some View {
-        if let icon = space.icon {
-            Image(systemName: icon)
-        } else {
-            Text(space.name.prefix(1).uppercased()).fontWeight(.bold)
-        }
+    private var glyph: some View {
+        SpaceIconView(icon: space.icon, name: space.name, size: 15)
     }
 }
 
@@ -1270,213 +1291,6 @@ private struct MenuRow: View {
     }
 
     private var highlighted: Bool { hovering && isEnabled }
-}
-
-/// Replaces the sidebar's content while making a space: name and icon, profile, theme.
-private struct CreateSpaceForm: View {
-    @Environment(BrowserStore.self) private var store
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var name = ""
-    @State private var icon: String?
-    /// nil makes a new profile; otherwise the space shares that profile's logins.
-    @State private var profileID: Profile.ID?
-    @State private var showsIcons = false
-    @State private var showsProfileInfo = false
-    @State private var showsThemes = false
-    @FocusState private var nameFocused: Bool
-
-    private var tint: SpaceTint { store.draftTint ?? .teal }
-    private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
-    private var fieldFill: Color { colorScheme == .dark ? .white.opacity(0.11) : .black.opacity(0.05) }
-
-    var body: some View {
-        VStack(spacing: 14) {
-            Illustration(tint: tint).padding(.top, 18)
-            VStack(spacing: 5) {
-                Text("Create a Space").font(.system(size: 20, weight: .semibold))
-                Text("Separate your tabs for life, work, projects, and more.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            }
-            .padding(.bottom, 4)
-
-            HStack(spacing: 8) {
-                Button { showsIcons = true } label: {
-                    Group {
-                        if let icon { Image(systemName: icon).foregroundStyle(tint.color) } else { Image(systemName: "plus") }
-                    }
-                    .font(.system(size: 13))
-                    .frame(width: 26, height: 26)
-                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.secondary.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: icon == nil ? [3, 2] : [])))
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .help("Choose an icon")
-                .popover(isPresented: $showsIcons, arrowEdge: .bottom) { iconGrid }
-                TextField("Space name…", text: $name)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($nameFocused)
-                    .onSubmit(create)
-            }
-            .padding(.horizontal, 6)
-            .frame(height: 36)
-            .background(RoundedRectangle(cornerRadius: 9).fill(fieldFill))
-
-            HStack(spacing: 8) {
-                Image(systemName: "person.crop.circle").foregroundStyle(.secondary)
-                Text("Profile")
-                Spacer(minLength: 4)
-                Picker("Profile", selection: $profileID) {
-                    Text("New Profile").tag(Profile.ID?.none)
-                    Divider()
-                    ForEach(store.profiles) { profile in Text(profile.name).tag(Profile.ID?.some(profile.id)) }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-                Button { showsProfileInfo = true } label: { Image(systemName: "info.circle") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .popover(isPresented: $showsProfileInfo, arrowEdge: .bottom) {
-                        Text("A space's profile keeps its own logins, cookies and history. Spaces that share a profile share logins.")
-                            .font(.system(size: 12))
-                            .frame(width: 220)
-                            .padding(12)
-                    }
-            }
-            .font(.system(size: 13))
-
-            VStack(alignment: .leading, spacing: 10) {
-                Button { withAnimation(.snappy(duration: 0.2)) { showsThemes.toggle() } } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "paintbrush").foregroundStyle(.secondary)
-                        Text("Choose a Theme")
-                        Spacer()
-                        Circle().fill(tint.color).frame(width: 12, height: 12)
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(showsThemes ? 180 : 0))
-                    }
-                    .font(.system(size: 13))
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                if showsThemes {
-                    HStack(spacing: 10) {
-                        ForEach(SpaceTint.allCases, id: \.self) { choice in
-                            Button { withAnimation(.snappy(duration: 0.2)) { store.draftTint = choice } } label: {
-                                Circle().fill(choice.color).frame(width: 22, height: 22)
-                                    .padding(3)
-                                    .overlay(Circle().strokeBorder(choice == tint ? Color.primary.opacity(0.7) : .clear, lineWidth: 2))
-                            }
-                            .buttonStyle(.plain)
-                            .help(choice.rawValue.capitalized)
-                        }
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            VStack(spacing: 8) {
-                Button(action: create) {
-                    Text("Create Space")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 34)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor))
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .opacity(trimmedName.isEmpty ? 0.45 : 1)
-                .disabled(trimmedName.isEmpty)
-                .keyboardShortcut(.defaultAction)
-                Button("Cancel", action: close)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(.bottom, 8)
-        }
-        .onAppear {
-            if store.draftTint == nil {
-                let used = Set(store.spaces.map(\.tint))
-                store.draftTint = SpaceTint.allCases.first { !used.contains($0) } ?? .teal
-            }
-            nameFocused = true
-        }
-    }
-
-    private var iconGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 4), count: 6), spacing: 4) {
-            IconChoice(symbol: nil, label: String(trimmedName.prefix(1)).uppercased(), selection: $icon, tint: tint)
-            ForEach(SpaceIcon.choices, id: \.self) { symbol in
-                IconChoice(symbol: symbol, label: nil, selection: $icon, tint: tint)
-            }
-        }
-        .padding(10)
-    }
-
-    private func create() {
-        guard !trimmedName.isEmpty else { return }
-        store.addSpace(name: trimmedName, tint: tint, icon: icon, profileID: profileID)
-        close()
-    }
-
-    private func close() {
-        store.draftTint = nil
-        store.isCreatingSpace = false
-    }
-
-    /// Three slightly fanned cards, as in Arc's space creation.
-    private struct Illustration: View {
-        let tint: SpaceTint
-
-        var body: some View {
-            ZStack {
-                card("leaf.fill", angle: -12, x: -34)
-                card("books.vertical.fill", angle: 12, x: 34)
-                card("laptopcomputer", angle: 0, x: 0)
-            }
-            .frame(height: 70)
-        }
-
-        private func card(_ symbol: String, angle: Double, x: CGFloat) -> some View {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(.background)
-                .frame(width: 50, height: 60)
-                .overlay(Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(tint.color))
-                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-                .rotationEffect(.degrees(angle))
-                .offset(x: x, y: angle == 0 ? -4 : 2)
-        }
-    }
-}
-
-private struct IconChoice: View {
-    let symbol: String?
-    let label: String?
-    @Binding var selection: String?
-    let tint: SpaceTint
-
-    var body: some View {
-        let selected = selection == symbol
-        Button { selection = symbol } label: {
-            Group {
-                if let symbol { Image(systemName: symbol) } else { Text(label?.isEmpty == false ? label! : "A").fontWeight(.bold) }
-            }
-            .font(.system(size: 12))
-            .foregroundStyle(selected ? .white : .secondary)
-            .frame(width: 26, height: 26)
-            .background(selected ? AnyShapeStyle(tint.color) : AnyShapeStyle(.quaternary.opacity(0.5)), in: .rect(cornerRadius: 7))
-            .contentShape(.rect(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .help(symbol ?? "First letter of the name")
-    }
 }
 
 struct FaviconView: View {

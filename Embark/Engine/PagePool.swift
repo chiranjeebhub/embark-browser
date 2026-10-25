@@ -68,6 +68,32 @@ final class PagePool: BrowserPageDelegate {
         }
     }
 
+    /// Deletes a removed profile's data from disk.
+    func removeData(for profile: Profile) { engine.removeData(for: profile) }
+
+    // MARK: Site settings and browsing data
+
+    var supportsSiteSettings: Bool { engine.supportsSiteSettings }
+    func setBlocksThirdPartyCookies(_ block: Bool) { engine.setBlocksThirdPartyCookies(block) }
+    func siteExceptions(for profile: Profile) -> [SiteException] { engine.siteExceptions(for: profile) }
+    func resetSiteException(_ exception: SiteException, for profile: Profile) {
+        engine.resetSiteException(exception, for: profile)
+    }
+    var browsingDataClearedAtLaunch: BrowsingData { engine.browsingDataClearedAtLaunch }
+
+    /// Clears a profile's data. Its open pages reload afterwards, so they don't keep showing
+    /// what was signed in.
+    func clearBrowsingData(_ data: BrowsingData, for profile: Profile, completion: @escaping @MainActor () -> Void) {
+        engine.clearBrowsingData(data, for: profile) { [weak self] in
+            if let self, let store = self.store, data.contains(.cookies) {
+                for space in store.spaces(using: profile.id) {
+                    for id in space.pageIDs { self.pages[id]?.reload() }
+                }
+            }
+            completion()
+        }
+    }
+
     func close(_ id: BrowserTab.ID) {
         guard let page = pages.removeValue(forKey: id) else { return }
         tabIDs[ObjectIdentifier(page)] = nil

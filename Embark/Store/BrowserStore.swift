@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Observation
 
 /// All browser state: profiles, spaces, favorites and tabs. Saved to Application Support as JSON.
@@ -22,14 +22,17 @@ final class BrowserStore {
     var pendingSplitTabID: BrowserTab.ID?
     /// The sidebar shows the Create a Space form instead of favorites and tabs.
     var isCreatingSpace = false
-    /// The tint picked in the Create a Space form, previewed on the window until it's created.
-    var draftTint: SpaceTint?
+    /// The theme picked in the Create a Space form, previewed on the window until it's created.
+    var draftTheme: SpaceTheme?
     /// The folder whose name is being edited in the tab list.
     var renamingFolderID: Folder.ID?
 
-    static let recentlyClosedLimit = 20
+    /// Archived tabs go here too, so it keeps more than a handful.
+    static let recentlyClosedLimit = 100
 
     @ObservationIgnored private var isLoading = false
+    /// Bumped by each change; a write waits briefly so a drag in the theme picker saves once.
+    @ObservationIgnored private var saveGeneration = 0
     @ObservationIgnored private let fileURL = BrowserStore.supportDirectory.appending(path: "state.json")
 
     static let supportDirectory: URL = {
@@ -42,6 +45,10 @@ final class BrowserStore {
     init() {
         load()
         if spaces.isEmpty { seed() }
+        nonisolated(unsafe) let store = self
+        _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            store.writeNow()
+        }
     }
 
     // MARK: Selection
@@ -379,21 +386,98 @@ final class BrowserStore {
 
     /// Adds a space and switches to it. With no `profileID` it gets a new profile of its own;
     /// otherwise it shares that profile's logins.
-    func addSpace(name: String, tint: SpaceTint, icon: String?, profileID: Profile.ID? = nil) {
+    func addSpace(name: String, theme: SpaceTheme, icon: String?, profileID: Profile.ID? = nil) {
         var profileID = profileID
         if profileID == nil {
-            let profile = Profile(name: name)
-            profiles.append(profile)
-            profileID = profile.id
+            profileID = addProfile(name: name).id
         }
-        let space = Space(name: name, tint: tint, icon: icon, profileID: profileID!)
+        let space = Space(name: name, theme: theme, icon: icon, profileID: profileID!)
         spaces.append(space)
         selectedSpaceID = space.id
     }
 
-    func setIcon(_ icon: String?, for id: Space.ID) {
+    /// A preset no space uses yet, so a new space stands apart; the first preset if all are used.
+    /// Settings can make it start from the current space's theme instead.
+    func suggestedTheme() -> SpaceTheme {
+        if NewSpaceTheme.current() == .current, let theme = selectedSpace?.resolvedTheme { return theme }
+        let used = Set(spaces.map(\.resolvedTheme.colors))
+        return (ThemePreset.all.first { !used.contains($0.theme.colors) } ?? ThemePreset.all[0]).theme
+    }
+
+    func updateSpace(_ id: Space.ID, _ body: (inout Space) -> Void) {
         guard let i = spaces.firstIndex(where: { $0.id == id }) else { return }
-        spaces[i].icon = icon
+        body(&spaces[i])
+    }
+
+    func setIcon(_ icon: String?, for id: Space.ID) {
+        updateSpace(id) { $0.icon = icon }
+    }
+
+    /// Moves a space to another profile. Returns its open pages, which belong to the old
+    /// profile's logins and must be closed so they reload under the new one.
+    func setProfile(_ profileID: Profile.ID, for id: Space.ID) -> [BrowserTab.ID] {
+        guard let space = spaces.first(where: { $0.id == id }), space.profileID != profileID,
+              profiles.contains(where: { $0.id == profileID }) else { return [] }
+        updateSpace(id) { $0.profileID = profileID }
+        return space.pageIDs
+    }
+
+    /// Deletes a space; the last one stays. Its profile is kept. Returns its pages to close.
+    @discardableResult
+    func deleteSpace(_ id: Space.ID) -> [BrowserTab.ID] {
+        guard spaces.count > 1, let i = spaces.firstIndex(where: { $0.id == id }) else { return [] }
+        let removed = spaces.remove(at: i)
+        if selectedSpaceID == id { selectedSpaceID = spaces[max(i - 1, 0)].id }
+        return removed.pageIDs
+    }
+
+    /// Archives every space's loose tabs not opened within Settings' "Archive tabs after".
+    /// Returns them so their pages can be closed.
+    func archiveIdleTabs(keeping visible: Set<BrowserTab.ID>) -> [BrowserTab.ID] {
+        guard let interval = ArchiveAfter.current().interval else { return [] }
+        let cutoff = Date.now.addingTimeInterval(-interval)
+        var archived: [BrowserTab.ID] = []
+        // Only spaces with something to archive are written, so idle checks don't save.
+        for i in spaces.indices {
+            var space = spaces[i]
+            let ids = space.archiveTabs(openedBefore: cutoff, keeping: visible, limit: Self.recentlyClosedLimit)
+            if !ids.isEmpty { spaces[i] = space; archived += ids }
+        }
+        return archived
+    }
+
+    /// Adds imported bookmarks to a space as a collapsed folder of unloaded tabs.
+    @discardableResult
+    func importBookmarks(_ root: ImportedFolder, into id: Space.ID) -> Int {
+        var count = 0
+        updateSpace(id) { count = $0.importBookmarks(root) }
+        return count
+    }
+
+    // MARK: Profiles
+
+    func spaces(using profileID: Profile.ID) -> [Space] {
+        spaces.filter { $0.profileID == profileID }
+    }
+
+    /// Adds a profile in the first badge color no other profile has.
+    @discardableResult
+    func addProfile(name: String) -> Profile {
+        let used = Set(profiles.compactMap(\.tint))
+        let profile = Profile(name: name, tint: SpaceTint.allCases.first { !used.contains($0) } ?? .blue)
+        profiles.append(profile)
+        return profile
+    }
+
+    func updateProfile(_ id: Profile.ID, _ body: (inout Profile) -> Void) {
+        guard let i = profiles.firstIndex(where: { $0.id == id }) else { return }
+        body(&profiles[i])
+    }
+
+    /// Deletes a profile no space uses. Returns it so its data can be removed from disk.
+    func deleteProfile(_ id: Profile.ID) -> Profile? {
+        guard spaces(using: id).isEmpty, let i = profiles.firstIndex(where: { $0.id == id }) else { return nil }
+        return profiles.remove(at: i)
     }
 
     // MARK: Extensions
@@ -426,6 +510,11 @@ final class BrowserStore {
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
         isLoading = true
         profiles = snapshot.profiles
+        // Profiles saved before badge colors get distinct ones.
+        for i in profiles.indices where profiles[i].tint == nil {
+            let used = Set(profiles.compactMap(\.tint))
+            profiles[i].tint = SpaceTint.allCases.first { !used.contains($0) } ?? .blue
+        }
         spaces = snapshot.spaces.map { space in
             var space = space
             space.cleanFolderNames()
@@ -437,6 +526,16 @@ final class BrowserStore {
 
     private func save() {
         guard !isLoading else { return }
+        saveGeneration += 1
+        let generation = saveGeneration
+        nonisolated(unsafe) let store = self
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard store.saveGeneration == generation else { return }
+            store.writeNow()
+        }
+    }
+
+    private func writeNow() {
         let snapshot = Snapshot(profiles: profiles, spaces: spaces, selectedSpaceID: selectedSpaceID)
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         try? data.write(to: fileURL, options: .atomic)
@@ -444,18 +543,18 @@ final class BrowserStore {
 
     private func seed() {
         isLoading = true
-        let personal = Profile(name: "Personal")
-        let work = Profile(name: "Work")
+        let personal = Profile(name: "Personal", tint: .purple)
+        let work = Profile(name: "Work", tint: .blue)
         profiles = [personal, work]
         func fav(_ title: String, _ url: String) -> Favorite { Favorite(title: title, url: URL(string: url)!) }
         spaces = [
-            Space(name: "Personal", tint: .purple, icon: "house.fill", profileID: personal.id, favorites: [
+            Space(name: "Personal", theme: SpaceTheme(tint: .purple), icon: "house.fill", profileID: personal.id, favorites: [
                 fav("Gmail", "https://mail.google.com"),
                 fav("YouTube", "https://www.youtube.com"),
                 fav("WhatsApp", "https://web.whatsapp.com"),
                 fav("Maps", "https://maps.google.com"),
             ]),
-            Space(name: "Work", tint: .blue, icon: "briefcase.fill", profileID: work.id, favorites: [
+            Space(name: "Work", theme: SpaceTheme(tint: .blue), icon: "briefcase.fill", profileID: work.id, favorites: [
                 fav("Gmail", "https://mail.google.com"),
                 fav("Calendar", "https://calendar.google.com"),
                 fav("Slack", "https://app.slack.com"),

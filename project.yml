@@ -29,6 +29,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.embark.browser
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Embark/App/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Embark
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_NSCameraUsageDescription: Websites you allow can use your camera.
@@ -53,6 +54,7 @@ targets:
         # Separate output folder so this app doesn't overwrite the WebKit build of the same name.
         CONFIGURATION_BUILD_DIR: "$(BUILD_DIR)/$(CONFIGURATION)-chromium"
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Embark/App/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Embark
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_NSCameraUsageDescription: Websites you allow can use your camera.

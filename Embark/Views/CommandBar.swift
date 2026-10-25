@@ -84,7 +84,7 @@ struct CommandBar: View {
                 label(url.absoluteString, detail: "Open")
             case .search(let q):
                 Image(systemName: "magnifyingglass").frame(width: 22)
-                label("Search for \u{201C}\(q)\u{201D}", detail: "Search")
+                label("Search for \u{201C}\(q)\u{201D}", detail: SearchEngine.current().title)
             }
         }
         .padding(.horizontal, 12)
@@ -110,9 +110,7 @@ struct CommandBar: View {
         case .favorite(let fav): store.selectFavorite(fav.id)
         case .go(let url): store.openTab(url)
         case .search(let q):
-            var components = URLComponents(string: "https://www.google.com/search")!
-            components.queryItems = [URLQueryItem(name: "q", value: q)]
-            if let url = components.url { store.openTab(url) }
+            if let url = SearchEngine.current().url(searching: q) { store.openTab(url) }
         }
         // New Split: whatever was picked becomes a pane beside the tab it started from.
         if let splitTarget, let picked = store.selectedTab?.id, picked != splitTarget {
