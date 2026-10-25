@@ -371,6 +371,15 @@ final class BrowserStore {
         }
     }
 
+    /// Moves a page from a Little window into a space's tab list, keeping the page as it is.
+    func adoptTab(_ tab: BrowserTab, into spaceID: Space.ID) {
+        selectSpace(spaceID)
+        mutateSelectedSpace { space in
+            space.tabs.insert(tab, at: 0)
+            space.selectedTabID = tab.id
+        }
+    }
+
     /// ⌘⇧T: the tab closed most recently in this space.
     func reopenLastClosedTab() {
         if let last = selectedSpace?.recentlyClosed?.last { reopenClosedTab(last.id) }

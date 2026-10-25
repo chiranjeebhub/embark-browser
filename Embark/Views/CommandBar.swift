@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// ⌘T / ⌘L: one glass bar that switches tabs, opens favorites or pages from history, runs
-/// actions like New Window, or goes to a URL or search.
+/// actions like New Window, or goes to a URL, a search or one of the search engine's suggestions.
 struct CommandBar: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
@@ -9,10 +9,13 @@ struct CommandBar: View {
     @Environment(\.openSettings) private var openSettings
     @State private var query = ""
     @State private var highlighted = 0
+    /// The engine's suggestions for `suggestionsQuery`.
+    @State private var suggestions: [String] = []
+    @State private var suggestionsQuery = ""
     @FocusState private var focused: Bool
 
     private enum Result: Identifiable {
-        case tab(BrowserTab), favorite(Favorite), history(HistoryEntry), action(BrowserAction), go(URL), search(String)
+        case tab(BrowserTab), favorite(Favorite), history(HistoryEntry), action(BrowserAction), go(URL), search(String), suggestion(String)
 
         var id: String {
             switch self {
@@ -22,6 +25,7 @@ struct CommandBar: View {
             case .action(let a): "action-\(a.id)"
             case .go(let u): "go-\(u)"
             case .search(let q): "search-\(q)"
+            case .suggestion(let q): "suggestion-\(q)"
             }
         }
     }
@@ -44,7 +48,10 @@ struct CommandBar: View {
             let visited = pool.history.search(q, profileID: space.profileID, limit: 12).filter { !open.contains($0.url) }
             out += visited.prefix(5).map(Result.history)
         }
-        if !q.isEmpty { out.append(.search(q)) }
+        if !q.isEmpty {
+            out.append(.search(q))
+            if suggestionsQuery == q { out += suggestions.map(Result.suggestion) }
+        }
         return out
     }
 
@@ -79,6 +86,7 @@ struct CommandBar: View {
         }
         .onAppear { focused = true }
         .onChange(of: query) { highlighted = 0 }
+        .task(id: query) { await loadSuggestions() }
         .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(results.count - 1, 0)); return .handled }
         .onKeyPress(.upArrow) { highlighted = max(highlighted - 1, 0); return .handled }
         .onKeyPress(.escape) { close(); return .handled }
@@ -105,6 +113,9 @@ struct CommandBar: View {
             case .search(let q):
                 Image(systemName: "magnifyingglass").frame(width: 22)
                 label("Search for \u{201C}\(q)\u{201D}", detail: SearchEngine.current().title)
+            case .suggestion(let q):
+                Image(systemName: "magnifyingglass").frame(width: 22).foregroundStyle(.secondary)
+                label(q, detail: "Search")
             }
         }
         .padding(.horizontal, 12)
@@ -134,7 +145,7 @@ struct CommandBar: View {
             run(action)
             return
         case .go(let url): store.openTab(url)
-        case .search(let q):
+        case .search(let q), .suggestion(let q):
             if let url = SearchEngine.current().url(searching: q) { store.openTab(url) }
         }
         // New Split: whatever was picked becomes a pane beside the tab it started from.
@@ -171,6 +182,21 @@ struct CommandBar: View {
         case .toggleSidebar: withAnimation(.sidebar) { store.isSidebarVisible.toggle() }
         case .settings: openSettings()
         }
+    }
+
+    /// Asks the search engine once typing pauses. Addresses, and private windows, don't ask.
+    private func loadSuggestions() async {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty, !store.isPrivate, Self.url(from: q) == nil else {
+            suggestions = []
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(150))
+        guard !Task.isCancelled else { return }
+        let fetched = await SearchSuggestions.fetch(q)
+        guard !Task.isCancelled else { return }
+        suggestions = fetched
+        suggestionsQuery = q
     }
 
     private func close() {

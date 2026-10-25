@@ -8,13 +8,20 @@ struct EmbarkApp: App {
     @State private var pool = PagePool()
 
     init() {
-        UserDefaults.standard.register(defaults: [PreferenceKey.showsAddressPill: true, PreferenceKey.peeksAtEdge: true])
+        UserDefaults.standard.register(defaults: [
+            PreferenceKey.showsAddressPill: true,
+            PreferenceKey.peeksAtEdge: true,
+            PreferenceKey.opensLinksInLittleWindow: true,
+        ])
     }
 
     var body: some Scene {
         WindowGroup(id: "browser") {
             // Links from other apps open in the browser window that was in front last.
-            BrowserWindowRoot { appDelegate.store = $0 }
+            BrowserWindowRoot { store, openWindow in
+                appDelegate.openWindow = openWindow
+                appDelegate.store = store
+            }
                 .environment(pool)
                 .frame(minWidth: 900, minHeight: 560)
         }
@@ -29,6 +36,17 @@ struct EmbarkApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
+
+        WindowGroup("Little Window", id: "little", for: LittleWindowItem.self) { $item in
+            if let item {
+                LittleWindow(item: item)
+                    .environment(store)
+                    .environment(pool)
+                    .frame(minWidth: 480, minHeight: 360)
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 860, height: 640)
 
         Window("History", id: "history") {
             HistoryView()
@@ -49,6 +67,8 @@ struct EmbarkApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Links from other apps open here once the window is up; until then they wait.
     weak var store: BrowserStore? { didSet { openPendingURLs() } }
+    /// For opening Little windows, which only SwiftUI can do.
+    var openWindow: OpenWindowAction?
     private var pendingURLs: [URL] = []
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -91,7 +111,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openPendingURLs() {
         guard let store, !pendingURLs.isEmpty else { return }
         store.isCreatingSpace = false
-        for url in pendingURLs { store.openTab(url) }
+        let littleWindows = UserDefaults.standard.bool(forKey: PreferenceKey.opensLinksInLittleWindow)
+        for url in pendingURLs {
+            // A space with that site as a favorite gets it; otherwise it opens in a Little
+            // window, or in the front window's space when those are turned off.
+            if let spaceID = LinkRouting.space(for: url, in: store.spaces) {
+                store.selectSpace(spaceID)
+                store.openTab(url)
+            } else if littleWindows, let openWindow, let spaceID = store.selectedSpaceID {
+                let tab = BrowserTab(title: url.host() ?? url.absoluteString, url: url)
+                openWindow(id: "little", value: LittleWindowItem(tab: tab, spaceID: spaceID))
+            } else {
+                store.openTab(url)
+            }
+        }
         pendingURLs = []
         NSApp.activate()
     }
@@ -124,10 +157,11 @@ struct BrowserWindowRoot: View {
     @Environment(PagePool.self) private var pool
     @Environment(\.controlActiveState) private var activeState
     @State private var store: BrowserStore
+    @Environment(\.openWindow) private var openWindow
     /// Called when the window comes to the front.
-    private let onActivate: (BrowserStore) -> Void
+    private let onActivate: (BrowserStore, OpenWindowAction) -> Void
 
-    init(isPrivate: Bool = false, onActivate: @escaping (BrowserStore) -> Void = { _ in }) {
+    init(isPrivate: Bool = false, onActivate: @escaping (BrowserStore, OpenWindowAction) -> Void = { _, _ in }) {
         _store = State(initialValue: isPrivate ? .privateWindow() : .forNewWindow())
         self.onActivate = onActivate
     }
@@ -156,7 +190,7 @@ struct BrowserWindowRoot: View {
 extension BrowserWindowRoot {
     private func activate() {
         pool.activate(store)
-        onActivate(store)
+        onActivate(store, openWindow)
     }
 }
 
@@ -186,7 +220,13 @@ struct BrowserCommands: Commands {
             Button("New Folder") { store.addFolder() }
                 .keyboardShortcut("n", modifiers: [.command, .option])
             Button("Close Tab") {
-                if let id = store.selectedTab?.id { pool.close(id); store.closeTab(id) }
+                // In a Little, History or Settings window, ⌘W closes the window instead.
+                if focusedStore == nil, let window = NSApp.keyWindow {
+                    window.performClose(nil)
+                } else if let id = store.selectedTab?.id {
+                    pool.close(id)
+                    store.closeTab(id)
+                }
             }
             .keyboardShortcut("w")
             Button("Reopen Closed Tab") { store.reopenLastClosedTab() }
