@@ -48,6 +48,12 @@ protocol BrowserPage: AnyObject {
     func countCookies(_ completion: @escaping (Int) -> Void)
     /// Deletes the site's cookies and storage.
     func clearSiteData(_ completion: @escaping () -> Void)
+
+    /// Highlights matches of `text`; results come back through the delegate.
+    func find(_ text: String, forward: Bool, findNext: Bool)
+    func stopFinding()
+    /// Takes a full-screen video or element back into the page.
+    func exitFullscreen()
 }
 
 extension BrowserPage {
@@ -58,6 +64,9 @@ extension BrowserPage {
     func setAudioMuted(_ muted: Bool) {}
     func countCookies(_ completion: @escaping (Int) -> Void) { completion(0) }
     func clearSiteData(_ completion: @escaping () -> Void) { completion() }
+    func find(_ text: String, forward: Bool, findNext: Bool) {}
+    func stopFinding() {}
+    func exitFullscreen() {}
 }
 
 @MainActor
@@ -66,6 +75,9 @@ protocol BrowserPageDelegate: AnyObject {
     func page(_ page: BrowserPage, requestsNewTab url: URL)
     func page(_ page: BrowserPage, requestsPermission request: PermissionRequest)
     func page(_ page: BrowserPage, dismissedPermissionRequest id: UInt64)
+    /// `active` counts from 1; 0 when no match is selected.
+    func page(_ page: BrowserPage, didFindMatches count: Int, active: Int)
+    func page(_ page: BrowserPage, didChangeFullscreen fullscreen: Bool)
 }
 
 /// Per-site permissions shown in page info. Raw values match EMBSitePermission.

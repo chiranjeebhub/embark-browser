@@ -75,6 +75,15 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut("w")
         }
+        CommandGroup(after: .textEditing) {
+            Divider()
+            Button("Find…") { if let id = store.selectedTab?.id { pool.openFind(in: id) } }
+                .keyboardShortcut("f")
+            Button("Find Next") { findAgain(forward: true) }
+                .keyboardShortcut("g")
+            Button("Find Previous") { findAgain(forward: false) }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+        }
         CommandMenu("Tab") {
             Button("Back") { pool.existingPage(for: store.selectedTab?.id)?.goBack() }
                 .keyboardShortcut("[")
@@ -110,5 +119,13 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut("b")
         }
+    }
+
+    /// ⌘G opens the find bar with the last search if it's closed.
+    private func findAgain(forward: Bool) {
+        guard let id = store.selectedTab?.id else { return }
+        if pool.findTabID != id { pool.openFind(in: id) }
+        guard !pool.lastFindText.isEmpty else { return }
+        pool.find(pool.lastFindText, forward: forward, findNext: true)
     }
 }

@@ -4,8 +4,10 @@
 #include "include/cef_application_mac.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_context_menu_handler.h"
 #include "include/cef_cookie.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_navigation_entry.h"
 #include "include/cef_permission_handler.h"
 #include "include/cef_ssl_info.h"
@@ -138,11 +140,19 @@ private:
 - (void)handleTitle:(NSString *)title;
 - (void)handleURL:(NSString *)url;
 - (void)handlePopup:(NSString *)url;
+- (void)handleFindCount:(int)count active:(int)active {
+    [self.delegate cefBrowser:self didFindMatches:count active:active];
+}
+
+- (void)handleFullscreen:(BOOL)fullscreen { [self.delegate cefBrowser:self didChangeFullscreen:fullscreen]; }
+
 - (void)handleNavigationStateBack:(BOOL)back forward:(BOOL)forward;
 - (void)handleCreated:(CefRefPtr<CefBrowser>)browser;
 - (void)handlePermissionRequest:(NSArray<NSNumber *> *)permissions origin:(NSString *)origin
                       requestID:(uint64_t)requestID respond:(void (^)(BOOL))respond;
 - (void)handlePermissionDismissed:(uint64_t)requestID;
+- (void)handleFindCount:(int)count active:(int)active;
+- (void)handleFullscreen:(BOOL)fullscreen;
 @end
 
 namespace {
@@ -267,12 +277,51 @@ EMBCEFDownload *DownloadSnapshot(uint32_t identifier, CefRefPtr<CefDownloadItem>
     return download;
 }
 
+// MARK: Context menu
+
+enum ContextMenuCommand {
+    kOpenLinkInNewTab = MENU_ID_USER_FIRST,
+    kCopyLink,
+    kOpenImageInNewTab,
+    kSaveImage,
+    kCopyImageAddress,
+    kInspectElement,
+};
+
+void CopyToPasteboard(const std::string &text) {
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    [pasteboard clearContents];
+    [pasteboard setString:@(text.c_str()) forType:NSPasteboardTypeString];
+}
+
+void ForgetBrowser(CefRefPtr<CefBrowser> browser) {
+    gBrowsers.erase(browser->GetIdentifier());
+    if (gBrowsers.empty() && gAllBrowsersClosed) {
+        auto completion = gAllBrowsersClosed;
+        gAllBrowsersClosed = nil;
+        dispatch_async(dispatch_get_main_queue(), completion);
+    }
+}
+
+/// Developer tools open in their own window. Tracked so quitting waits for it to close.
+class DevToolsClient : public CefClient, public CefLifeSpanHandler {
+public:
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { gBrowsers[browser->GetIdentifier()] = browser; }
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { ForgetBrowser(browser); }
+
+private:
+    IMPLEMENT_REFCOUNTING(DevToolsClient);
+};
+
 /// Media requests get ids above this, so they never collide with Chromium's prompt ids.
 uint64_t gNextMediaRequestID = 1ull << 62;
 
 class EmbarkClient : public CefClient,
                      public CefDisplayHandler,
+                     public CefContextMenuHandler,
                      public CefDownloadHandler,
+                     public CefFindHandler,
                      public CefLifeSpanHandler,
                      public CefLoadHandler,
                      public CefPermissionHandler {
@@ -280,7 +329,9 @@ public:
     explicit EmbarkClient(EMBCEFBrowser *owner) : owner_(owner) {}
 
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
@@ -361,14 +412,7 @@ public:
         return true;
     }
 
-    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
-        gBrowsers.erase(browser->GetIdentifier());
-        if (gBrowsers.empty() && gAllBrowsersClosed) {
-            auto completion = gAllBrowsersClosed;
-            gAllBrowsersClosed = nil;
-            dispatch_async(dispatch_get_main_queue(), completion);
-        }
-    }
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { ForgetBrowser(browser); }
 
     // Popups and target=_blank become tabs in the same space instead of new windows.
     bool OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int, const CefString &targetURL,
@@ -395,6 +439,54 @@ public:
         if (item->IsComplete() || item->IsCanceled() || item->IsInterrupted()) gDownloadCallbacks.erase(identifier);
         else gDownloadCallbacks[identifier] = callback;
         [gDownloadObserver cefDownloadDidUpdate:DownloadSnapshot(identifier, item)];
+    }
+
+    void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override {
+        [owner_ handleFullscreen:fullscreen];
+    }
+
+    void OnFindResult(CefRefPtr<CefBrowser>, int, int count, const CefRect &, int activeMatchOrdinal, bool) override {
+        [owner_ handleFindCount:count active:activeMatchOrdinal];
+    }
+
+    // Chromium's menu plus what people expect from Chrome: link and image items on top,
+    // Inspect Element at the bottom.
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams> params,
+                             CefRefPtr<CefMenuModel> model) override {
+        size_t index = 0;
+        if (!params->GetLinkUrl().empty()) {
+            model->InsertItemAt(index++, kOpenLinkInNewTab, "Open Link in New Tab");
+            model->InsertItemAt(index++, kCopyLink, "Copy Link");
+            model->InsertSeparatorAt(index++);
+        }
+        if (params->GetMediaType() == CM_MEDIATYPE_IMAGE && !params->GetSourceUrl().empty()) {
+            model->InsertItemAt(index++, kOpenImageInNewTab, "Open Image in New Tab");
+            model->InsertItemAt(index++, kSaveImage, "Save Image");
+            model->InsertItemAt(index++, kCopyImageAddress, "Copy Image Address");
+            model->InsertSeparatorAt(index++);
+        }
+        size_t count = model->GetCount();
+        if (count > 0 && model->GetTypeAt(count - 1) != MENUITEMTYPE_SEPARATOR) model->AddSeparator();
+        model->AddItem(kInspectElement, "Inspect Element");
+    }
+
+    bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams> params,
+                              int commandID, EventFlags) override {
+        switch (commandID) {
+        case kOpenLinkInNewTab: [owner_ handlePopup:@(params->GetLinkUrl().ToString().c_str())]; return true;
+        case kCopyLink: CopyToPasteboard(params->GetLinkUrl().ToString()); return true;
+        case kOpenImageInNewTab: [owner_ handlePopup:@(params->GetSourceUrl().ToString().c_str())]; return true;
+        case kSaveImage: browser->GetHost()->StartDownload(params->GetSourceUrl()); return true;
+        case kCopyImageAddress: CopyToPasteboard(params->GetSourceUrl().ToString()); return true;
+        case kInspectElement: {
+            CefWindowInfo windowInfo;
+            CefBrowserSettings settings;
+            browser->GetHost()->ShowDevTools(windowInfo, new DevToolsClient(), settings,
+                                             CefPoint(params->GetXCoord(), params->GetYCoord()));
+            return true;
+        }
+        default: return false;
+        }
     }
 
     void Detach() { owner_ = nil; }
@@ -464,6 +556,13 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
 - (void)goBack { if (_browser) _browser->GoBack(); }
 - (void)goForward { if (_browser) _browser->GoForward(); }
 - (void)reload { if (_browser) _browser->Reload(); }
+
+- (void)find:(NSString *)text forward:(BOOL)forward findNext:(BOOL)findNext {
+    if (_browser) _browser->GetHost()->Find(text.UTF8String, forward, false, findNext);
+}
+
+- (void)stopFinding { if (_browser) _browser->GetHost()->StopFinding(true); }
+- (void)exitFullscreen { if (_browser) _browser->GetHost()->ExitFullscreen(true); }
 
 - (void)close {
     if (_client) _client->Detach();
@@ -575,6 +674,12 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
     if (!target) return;
     dispatch_async(dispatch_get_main_queue(), ^{ [self.delegate cefBrowser:self requestsNewTab:target]; });
 }
+
+- (void)handleFindCount:(int)count active:(int)active {
+    [self.delegate cefBrowser:self didFindMatches:count active:active];
+}
+
+- (void)handleFullscreen:(BOOL)fullscreen { [self.delegate cefBrowser:self didChangeFullscreen:fullscreen]; }
 
 - (void)handleNavigationStateBack:(BOOL)back forward:(BOOL)forward {
     _canGoBack = back;

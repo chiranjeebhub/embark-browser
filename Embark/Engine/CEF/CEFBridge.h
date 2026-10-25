@@ -43,6 +43,10 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
                 respond:(void (^)(BOOL allow))respond NS_SWIFT_NAME(cefBrowser(_:requestsPermissions:origin:requestID:respond:));
 /// Chromium withdrew a request, e.g. after navigating away.
 - (void)cefBrowser:(EMBCEFBrowser *)browser dismissedPermissionRequest:(uint64_t)requestID;
+/// Matches for the current find; `active` counts from 1, 0 when none is selected.
+- (void)cefBrowser:(EMBCEFBrowser *)browser didFindMatches:(NSInteger)count active:(NSInteger)active NS_SWIFT_NAME(cefBrowser(_:didFindMatches:active:));
+/// A video or other element went full screen inside the page, or came out of it.
+- (void)cefBrowser:(EMBCEFBrowser *)browser didChangeFullscreen:(BOOL)fullscreen NS_SWIFT_NAME(cefBrowser(_:didChangeFullscreen:));
 @end
 
 /// Process-wide CEF setup. Call `startWithCacheRoot:` once, before any window appears.
@@ -98,6 +102,12 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 - (void)goForward;
 - (void)reload;
 - (void)close;
+
+/// Highlights matches of `text`. `findNext` moves to the next match of the same text.
+- (void)find:(NSString *)text forward:(BOOL)forward findNext:(BOOL)findNext;
+- (void)stopFinding;
+/// Takes a full-screen element back into the page.
+- (void)exitFullscreen;
 
 /// The visible page came over a secure connection with a valid certificate.
 @property (nonatomic, readonly) BOOL isSecure;

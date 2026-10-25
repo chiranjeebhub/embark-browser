@@ -18,6 +18,17 @@ final class PagePool: BrowserPageDelegate {
     /// Permissions each site asked for this session, so page info can list them.
     private(set) var usedPermissions: [String: Set<SitePermission>] = [:]
 
+    /// The tab whose find bar is open.
+    private(set) var findTabID: BrowserTab.ID?
+    /// Matches for the open find bar; nil until the page answers.
+    private(set) var findResult: (count: Int, active: Int)?
+    /// The last text searched for, offered again when the find bar reopens.
+    @ObservationIgnored var lastFindText = ""
+    /// Bumped by ⌘F while the bar is already open, to focus its field again.
+    private(set) var findFocusRequest = 0
+    /// The tab showing a video (or other element) full screen.
+    private(set) var fullscreenTabID: BrowserTab.ID?
+
     /// Downloads this session, newest first.
     private(set) var downloads: [Download] = []
     /// Bumped when a download starts, so the sidebar can show the list.
@@ -81,7 +92,41 @@ final class PagePool: BrowserPageDelegate {
     /// Deletes a removed profile's data from disk.
     func removeData(for profile: Profile) { engine.removeData(for: profile) }
 
+    // MARK: Find
+
+    func openFind(in id: BrowserTab.ID) {
+        if let current = findTabID, current != id { existingPage(for: current)?.stopFinding() }
+        if findTabID == id { findFocusRequest += 1; return }
+        findTabID = id
+        findResult = nil
+    }
+
+    func find(_ text: String, forward: Bool = true, findNext: Bool = false) {
+        lastFindText = text
+        guard let page = existingPage(for: findTabID) else { return }
+        if text.isEmpty {
+            page.stopFinding()
+            findResult = nil
+        } else {
+            page.find(text, forward: forward, findNext: findNext)
+        }
+    }
+
+    func closeFind() {
+        existingPage(for: findTabID)?.stopFinding()
+        findTabID = nil
+        findResult = nil
+    }
+
+    // MARK: Full screen
+
+    func exitFullscreen() {
+        existingPage(for: fullscreenTabID)?.exitFullscreen()
+    }
+
     func close(_ id: BrowserTab.ID) {
+        if findTabID == id { findTabID = nil; findResult = nil }
+        if fullscreenTabID == id { fullscreenTabID = nil }
         guard let page = pages.removeValue(forKey: id) else { return }
         tabIDs[ObjectIdentifier(page)] = nil
         page.close()
@@ -146,6 +191,20 @@ final class PagePool: BrowserPageDelegate {
 
     func page(_ page: BrowserPage, dismissedPermissionRequest id: UInt64) {
         permissionRequests.removeAll { $0.request.id == id }
+    }
+
+    func page(_ page: BrowserPage, didFindMatches count: Int, active: Int) {
+        guard let id = tabIDs[ObjectIdentifier(page)], id == findTabID else { return }
+        findResult = (count, active)
+    }
+
+    func page(_ page: BrowserPage, didChangeFullscreen fullscreen: Bool) {
+        guard let id = tabIDs[ObjectIdentifier(page)] else { return }
+        if fullscreen {
+            fullscreenTabID = id
+        } else if fullscreenTabID == id {
+            fullscreenTabID = nil
+        }
     }
 
     /// Answers a prompt shown for `request`.

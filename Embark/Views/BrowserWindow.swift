@@ -12,6 +12,9 @@ struct BrowserWindow: View {
     @State private var sidebarShortcut: Any?
     /// Where a tab dragged over the page would land, for the split preview.
     @State private var pageDropZone: PageDropZone?
+    @State private var window: NSWindow?
+    /// The window went full screen because a video did, so it leaves full screen with it.
+    @State private var enteredFullScreenForPage = false
 
     /// How far the peeking sidebar's card sits from the window's top, left and bottom edges.
     static let peekInset: CGFloat = 8
@@ -23,8 +26,9 @@ struct BrowserWindow: View {
         let neighborTheme = store.draftTheme == nil
             ? store.neighborSpace(towardProgress: store.swipeProgress)?.resolvedTheme : nil
         let tint = theme.accent
+        let isPageFullscreen = self.isPageFullscreen
         HStack(spacing: 0) {
-            if store.isSidebarVisible {
+            if store.isSidebarVisible && !isPageFullscreen {
                 Sidebar()
                     .frame(width: 264)
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -36,15 +40,24 @@ struct BrowserWindow: View {
                         CommandBar().transition(.opacity.combined(with: .scale(scale: 0.98)))
                     }
                 }
-                .clipShape(.rect(cornerRadius: 12))
-                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-                .padding(.vertical, 8)
-                .padding(.trailing, 8)
-                .padding(.leading, store.isSidebarVisible ? 0 : 8)
+                .clipShape(.rect(cornerRadius: isPageFullscreen ? 0 : 12))
+                .shadow(color: .black.opacity(isPageFullscreen ? 0 : 0.12), radius: 12, y: 4)
+                .padding(.vertical, isPageFullscreen ? 0 : 8)
+                .padding(.trailing, isPageFullscreen ? 0 : 8)
+                .padding(.leading, store.isSidebarVisible || isPageFullscreen ? 0 : 8)
         }
         .overlay(alignment: .leading) {
-            if !store.isSidebarVisible { peekingSidebar(tint: tint) }
+            if !store.isSidebarVisible && !isPageFullscreen { peekingSidebar(tint: tint) }
         }
+        .background(WindowReader(window: $window))
+        .onChange(of: isPageFullscreen) { _, fullscreen in setWindowFullScreen(fullscreen) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { note in
+            // Leaving full screen from the green button or Mission Control takes the video out too.
+            guard note.object as? NSWindow === window, pool.fullscreenTabID != nil else { return }
+            enteredFullScreenForPage = false
+            pool.exitFullscreen()
+        }
+        .onChange(of: store.selectedTab?.id) { if pool.findTabID != nil { pool.closeFind() } }
         .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false }
         // While peeking, the card draws its own traffic lights (see CardTrafficLights).
         .background(WindowButtons(isVisible: store.isSidebarVisible))
@@ -64,6 +77,31 @@ struct BrowserWindow: View {
         .task { await sleepIdleTabs() }
         .onAppear(perform: installSidebarShortcut)
         .onDisappear { sidebarShortcut.map(NSEvent.removeMonitor); sidebarShortcut = nil }
+    }
+
+    /// A page on screen is showing a video (or other element) full screen.
+    private var isPageFullscreen: Bool {
+        guard let id = pool.fullscreenTabID else { return false }
+        return visibleTabIDs.contains(id)
+    }
+
+    /// The selected tab and the other panes of its split.
+    private var visibleTabIDs: Set<BrowserTab.ID> {
+        Set([store.selectedTab?.id].compactMap { $0 } + (store.split(containing: store.selectedTab?.id)?.tabIDs ?? []))
+    }
+
+    /// Full-screen video fills the screen, as in Chrome: the window goes full screen with it,
+    /// and comes back out afterwards if it wasn't full screen before.
+    private func setWindowFullScreen(_ fullscreen: Bool) {
+        guard let window else { return }
+        let isFullScreen = window.styleMask.contains(.fullScreen)
+        if fullscreen, !isFullScreen {
+            enteredFullScreenForPage = true
+            window.toggleFullScreen(nil)
+        } else if !fullscreen, enteredFullScreenForPage {
+            enteredFullScreenForPage = false
+            if isFullScreen { window.toggleFullScreen(nil) }
+        }
     }
 
     private func colorScheme(for appearance: SpaceTheme.Appearance) -> ColorScheme? {
@@ -120,6 +158,11 @@ struct BrowserWindow: View {
     private func installSidebarShortcut() {
         guard sidebarShortcut == nil else { return }
         sidebarShortcut = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Escape takes a full-screen video back into the page.
+            if event.keyCode == 53, pool.fullscreenTabID != nil {
+                pool.exitFullscreen()
+                return nil
+            }
             guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                   event.charactersIgnoringModifiers == "s" else { return event }
             withAnimation(.sidebar) { store.isSidebarVisible.toggle() }
@@ -130,7 +173,10 @@ struct BrowserWindow: View {
     @ViewBuilder private var content: some View {
         if let space = store.selectedSpace, let profile = store.profile(for: space), let tab = store.selectedTab {
             Group {
-                if let split = store.split(containing: tab.id) {
+                if let id = pool.fullscreenTabID, visibleTabIDs.contains(id), let fullscreenTab = space.pageTab(id) {
+                    // Only the full-screen pane, filling the window.
+                    PageHost(tab: fullscreenTab, profile: profile)
+                } else if let split = store.split(containing: tab.id) {
                     SplitPanes(split: split, space: space, profile: profile)
                 } else {
                     PageHost(tab: tab, profile: profile)
@@ -149,9 +195,18 @@ struct BrowserWindow: View {
                     }
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if let id = pool.findTabID, visibleTabIDs.contains(id) {
+                    FindBar()
+                        .padding(.top, 10)
+                        .padding(.trailing, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.18), value: pool.findTabID)
             .overlay(alignment: .top) {
                 // Permission prompts for the pages on screen, one at a time.
-                let visible = Set([tab.id] + (store.split(containing: tab.id)?.tabIDs ?? []))
+                let visible = visibleTabIDs
                 if let request = pool.permissionRequests.first(where: { visible.contains($0.tabID) }) {
                     PermissionPromptCard(request: request)
                         .padding(.top, 14)
@@ -172,8 +227,7 @@ struct BrowserWindow: View {
     private func sleepIdleTabs() async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(60))
-            let visible = Set([store.selectedTab?.id].compactMap { $0 } + (store.split(containing: store.selectedTab?.id)?.tabIDs ?? []))
-            pool.sleepIdle(spaces: store.spaces, visible: visible, idle: 30 * 60)
+            pool.sleepIdle(spaces: store.spaces, visible: visibleTabIDs, idle: 30 * 60)
         }
     }
 }
