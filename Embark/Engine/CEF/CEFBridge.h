@@ -54,6 +54,38 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
 + (void)shutdown;
 @end
 
+typedef NS_ENUM(NSInteger, EMBDownloadState) {
+    EMBDownloadStateInProgress,
+    EMBDownloadStateComplete,
+    EMBDownloadStateCanceled,
+    EMBDownloadStateFailed,
+};
+
+/// A snapshot of one download, sent on every change.
+@interface EMBCEFDownload : NSObject
+@property (nonatomic) uint32_t identifier;
+@property (nonatomic, copy, nullable) NSURL *url;
+@property (nonatomic, copy) NSString *fileName;
+@property (nonatomic, copy, nullable) NSURL *fileURL;
+@property (nonatomic) int64_t receivedBytes;
+/// -1 while the size is unknown.
+@property (nonatomic) int64_t totalBytes;
+@property (nonatomic) int64_t bytesPerSecond;
+@property (nonatomic) EMBDownloadState state;
+@end
+
+@protocol EMBCEFDownloadObserver <NSObject>
+/// Where to save a new download. Return nil to cancel it.
+- (nullable NSURL *)cefDownloadDestinationForSuggestedName:(NSString *)name NS_SWIFT_NAME(cefDownloadDestination(suggestedName:));
+- (void)cefDownloadDidUpdate:(EMBCEFDownload *)download;
+@end
+
+/// Downloads from every tab and profile go to one observer.
+@interface EMBCEFDownloads : NSObject
+@property (class, nonatomic, weak, nullable) id<EMBCEFDownloadObserver> observer;
++ (void)cancel:(uint32_t)identifier;
+@end
+
 /// One Chromium browser (tab). `profileDirectory` keeps its cookies and logins apart.
 @interface EMBCEFBrowser : NSObject
 - (instancetype)initWithURL:(NSURL *)url profileDirectory:(NSURL *)profileDirectory;

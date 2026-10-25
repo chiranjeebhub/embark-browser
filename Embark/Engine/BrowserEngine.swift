@@ -11,11 +11,17 @@ protocol BrowserEngine: AnyObject {
     func extensions(for profile: Profile) -> [InstalledExtension]
     /// Deletes a profile's logins, cookies, history and cache from disk. Its pages are closed.
     func removeData(for profile: Profile)
+    /// Downloads from every page: `destination` picks where a new one is saved (nil cancels it)
+    /// and `update` reports each change.
+    func observeDownloads(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void)
+    func cancelDownload(_ id: Download.ID)
 }
 
 extension BrowserEngine {
     var supportsExtensions: Bool { false }
     func extensions(for profile: Profile) -> [InstalledExtension] { [] }
+    func observeDownloads(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void) {}
+    func cancelDownload(_ id: Download.ID) {}
 }
 
 @MainActor

@@ -1092,17 +1092,22 @@ private struct SplitRow: View {
     }
 }
 
-/// Library on the left, one glyph per space in the middle, and the + menu on the right.
+/// Library and downloads on the left, one glyph per space in the middle, and the + menu on the right.
 private struct BottomBar: View {
     @Environment(BrowserStore.self) private var store
+    @Environment(PagePool.self) private var pool
     @State private var showsLibrary = false
     @State private var showsNewMenu = false
 
     var body: some View {
         HStack(spacing: 0) {
-            Button { showsLibrary = true } label: { Image(systemName: "archivebox") }
-                .help("Library")
-                .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
+            HStack(spacing: 0) {
+                Button { showsLibrary = true } label: { Image(systemName: "archivebox") }
+                    .help("Library")
+                    .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
+                DownloadsButton()
+            }
+            .animation(.snappy(duration: 0.2), value: pool.downloads.isEmpty)
             Spacer(minLength: 8)
             HStack(spacing: 16) {
                 // The active marker moves across during a swipe.

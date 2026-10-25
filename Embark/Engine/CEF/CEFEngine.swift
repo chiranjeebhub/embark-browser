@@ -20,6 +20,16 @@ final class CEFEngine: BrowserEngine {
         try? FileManager.default.removeItem(at: directory(for: profile))
     }
 
+    private var downloadObserver: DownloadObserver?
+
+    func observeDownloads(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void) {
+        let observer = DownloadObserver(destination: destination, update: update)
+        downloadObserver = observer
+        EMBCEFDownloads.observer = observer
+    }
+
+    func cancelDownload(_ id: Download.ID) { EMBCEFDownloads.cancel(id) }
+
     /// Chromium's profile folder: cookies, logins and extensions, apart from other profiles.
     private func directory(for profile: Profile) -> URL {
         Self.cacheRoot.appending(path: "Profile-\(profile.id.uuidString)", directoryHint: .isDirectory)
@@ -112,5 +122,31 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
 
     private func report() {
         delegate?.page(self, didChangeTitle: title, url: url)
+    }
+}
+
+/// Turns the bridge's download snapshots into `Download` values.
+private final class DownloadObserver: NSObject, EMBCEFDownloadObserver {
+    let destination: (String) -> URL?
+    let update: (Download) -> Void
+
+    init(destination: @escaping (String) -> URL?, update: @escaping (Download) -> Void) {
+        self.destination = destination
+        self.update = update
+    }
+
+    func cefDownloadDestination(suggestedName name: String) -> URL? { destination(name) }
+
+    func cefDownloadDidUpdate(_ download: EMBCEFDownload) {
+        let state: Download.State = switch download.state {
+        case .complete: .complete
+        case .canceled: .canceled
+        case .failed: .failed
+        default: .inProgress
+        }
+        update(Download(id: download.identifier, url: download.url, fileName: download.fileName, fileURL: download.fileURL,
+                        receivedBytes: download.receivedBytes,
+                        totalBytes: download.totalBytes >= 0 ? download.totalBytes : nil,
+                        bytesPerSecond: download.bytesPerSecond, state: state))
     }
 }

@@ -5,6 +5,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_cookie.h"
+#include "include/cef_download_handler.h"
 #include "include/cef_navigation_entry.h"
 #include "include/cef_permission_handler.h"
 #include "include/cef_ssl_info.h"
@@ -130,6 +131,9 @@ private:
 @implementation EMBCEFCertificate
 @end
 
+@implementation EMBCEFDownload
+@end
+
 @interface EMBCEFBrowser ()
 - (void)handleTitle:(NSString *)title;
 - (void)handleURL:(NSString *)url;
@@ -229,11 +233,46 @@ private:
     IMPLEMENT_REFCOUNTING(CookieDeleter);
 };
 
+// MARK: Downloads
+
+// Chromium numbers downloads per profile, so Embark gives each its own id across profiles.
+std::map<std::pair<std::string, uint32_t>, uint32_t> gDownloadIDs;
+std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> gDownloadCallbacks;
+uint32_t gNextDownloadID = 1;
+__weak id<EMBCEFDownloadObserver> gDownloadObserver;
+
+uint32_t DownloadID(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> item) {
+    std::string profile = browser ? browser->GetHost()->GetRequestContext()->GetCachePath().ToString() : "";
+    auto key = std::make_pair(profile, item->GetId());
+    auto found = gDownloadIDs.find(key);
+    if (found != gDownloadIDs.end()) return found->second;
+    return gDownloadIDs[key] = gNextDownloadID++;
+}
+
+EMBCEFDownload *DownloadSnapshot(uint32_t identifier, CefRefPtr<CefDownloadItem> item) {
+    EMBCEFDownload *download = [EMBCEFDownload new];
+    download.identifier = identifier;
+    std::string url = item->GetOriginalUrl().ToString();
+    download.url = url.empty() ? nil : [NSURL URLWithString:@(url.c_str())];
+    std::string path = item->GetFullPath().ToString();
+    download.fileURL = path.empty() ? nil : [NSURL fileURLWithPath:@(path.c_str())];
+    download.fileName = download.fileURL ? download.fileURL.lastPathComponent : @(item->GetSuggestedFileName().ToString().c_str());
+    download.receivedBytes = item->GetReceivedBytes();
+    download.totalBytes = item->GetTotalBytes() > 0 ? item->GetTotalBytes() : -1;
+    download.bytesPerSecond = item->GetCurrentSpeed();
+    if (item->IsComplete()) download.state = EMBDownloadStateComplete;
+    else if (item->IsCanceled()) download.state = EMBDownloadStateCanceled;
+    else if (item->IsInterrupted()) download.state = EMBDownloadStateFailed;
+    else download.state = EMBDownloadStateInProgress;
+    return download;
+}
+
 /// Media requests get ids above this, so they never collide with Chromium's prompt ids.
 uint64_t gNextMediaRequestID = 1ull << 62;
 
 class EmbarkClient : public CefClient,
                      public CefDisplayHandler,
+                     public CefDownloadHandler,
                      public CefLifeSpanHandler,
                      public CefLoadHandler,
                      public CefPermissionHandler {
@@ -241,6 +280,7 @@ public:
     explicit EmbarkClient(EMBCEFBrowser *owner) : owner_(owner) {}
 
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
@@ -339,6 +379,24 @@ public:
         return true;
     }
 
+    // Downloads go straight to the folder Embark picks, without a save panel, like Arc.
+    bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem>, const CefString &suggestedName,
+                          CefRefPtr<CefBeforeDownloadCallback> callback) override {
+        NSURL *destination = [gDownloadObserver cefDownloadDestinationForSuggestedName:@(suggestedName.ToString().c_str())];
+        if (!destination) return false;
+        callback->Continue(destination.path.UTF8String, false);
+        return true;
+    }
+
+    void OnDownloadUpdated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> item,
+                           CefRefPtr<CefDownloadItemCallback> callback) override {
+        if (!item->IsValid()) return;
+        uint32_t identifier = DownloadID(browser, item);
+        if (item->IsComplete() || item->IsCanceled() || item->IsInterrupted()) gDownloadCallbacks.erase(identifier);
+        else gDownloadCallbacks[identifier] = callback;
+        [gDownloadObserver cefDownloadDidUpdate:DownloadSnapshot(identifier, item)];
+    }
+
     void Detach() { owner_ = nil; }
 
 private:
@@ -362,6 +420,18 @@ CefRefPtr<CefRequestContext> ContextForProfile(NSURL *directory) {
 }
 
 }  // namespace
+
+@implementation EMBCEFDownloads
+
++ (id<EMBCEFDownloadObserver>)observer { return gDownloadObserver; }
++ (void)setObserver:(id<EMBCEFDownloadObserver>)observer { gDownloadObserver = observer; }
+
++ (void)cancel:(uint32_t)identifier {
+    auto found = gDownloadCallbacks.find(identifier);
+    if (found != gDownloadCallbacks.end()) found->second->Cancel();
+}
+
+@end
 
 @implementation EMBCEFBrowser {
     NSView *_view;

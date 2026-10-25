@@ -18,8 +18,18 @@ final class PagePool: BrowserPageDelegate {
     /// Permissions each site asked for this session, so page info can list them.
     private(set) var usedPermissions: [String: Set<SitePermission>] = [:]
 
+    /// Downloads this session, newest first.
+    private(set) var downloads: [Download] = []
+    /// Bumped when a download starts, so the sidebar can show the list.
+    private(set) var downloadStartCount = 0
+
     init(engine: BrowserEngine = Engines.make()) {
         self.engine = engine
+        engine.observeDownloads { name in
+            Download.destination(for: name, in: Self.downloadsFolder)
+        } update: { [weak self] download in
+            MainActor.assumeIsolated { self?.updateDownload(download) }
+        }
     }
 
     func page(for tab: BrowserTab, profile: Profile) -> BrowserPage {
@@ -82,6 +92,37 @@ final class PagePool: BrowserPageDelegate {
         let cutoff = Date.now.addingTimeInterval(-idle)
         for tab in spaces.flatMap(\.tabs) where tab.lastActive < cutoff && !visible.contains(tab.id) {
             close(tab.id)
+        }
+    }
+
+    // MARK: Downloads
+
+    nonisolated static var downloadsFolder: URL {
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+    }
+
+    var activeDownloads: [Download] { downloads.filter { $0.state == .inProgress } }
+
+    func cancelDownload(_ id: Download.ID) { engine.cancelDownload(id) }
+
+    /// Removes finished downloads from the list. Their files stay.
+    func clearFinishedDownloads() {
+        downloads.removeAll { $0.state != .inProgress }
+    }
+
+    private func updateDownload(_ download: Download) {
+        if let i = downloads.firstIndex(where: { $0.id == download.id }) {
+            let wasActive = downloads[i].state == .inProgress
+            var updated = download
+            updated.startedAt = downloads[i].startedAt
+            downloads[i] = updated
+            if wasActive, download.state == .complete, let file = download.fileURL {
+                // Bounces the Downloads stack in the Dock, as Safari and Chrome do.
+                DistributedNotificationCenter.default().post(name: .init("com.apple.DownloadFileFinished"), object: file.path)
+            }
+        } else {
+            downloads.insert(download, at: 0)
+            if download.state == .inProgress { downloadStartCount += 1 }
         }
     }
 
