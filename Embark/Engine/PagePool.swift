@@ -68,6 +68,9 @@ final class PagePool: BrowserPageDelegate {
         }
     }
 
+    /// Deletes a removed profile's data from disk.
+    func removeData(for profile: Profile) { engine.removeData(for: profile) }
+
     func close(_ id: BrowserTab.ID) {
         guard let page = pages.removeValue(forKey: id) else { return }
         tabIDs[ObjectIdentifier(page)] = nil

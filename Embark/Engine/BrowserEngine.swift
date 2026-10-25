@@ -9,6 +9,8 @@ protocol BrowserEngine: AnyObject {
     var supportsExtensions: Bool { get }
     /// The Chrome extensions installed in a profile.
     func extensions(for profile: Profile) -> [InstalledExtension]
+    /// Deletes a profile's logins, cookies, history and cache from disk. Its pages are closed.
+    func removeData(for profile: Profile)
 }
 
 extension BrowserEngine {
