@@ -12,6 +12,9 @@ struct CommandBar: View {
     /// The engine's suggestions for `suggestionsQuery`.
     @State private var suggestions: [String] = []
     @State private var suggestionsQuery = ""
+    /// Worked out when the query or suggestions change, not on every redraw or arrow key:
+    /// searching history goes through up to 20,000 pages.
+    @State private var results: [Result] = []
     @FocusState private var focused: Bool
 
     private enum Result: Identifiable {
@@ -30,7 +33,7 @@ struct CommandBar: View {
         }
     }
 
-    private var results: [Result] {
+    private func matchingResults() -> [Result] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard let space = store.selectedSpace else { return [] }
         var out: [Result] = []
@@ -84,8 +87,16 @@ struct CommandBar: View {
                 .padding(.top, max(24, geo.size.height * 0.5 - 37))
             }
         }
-        .onAppear { focused = true }
-        .onChange(of: query) { highlighted = 0 }
+        .onAppear {
+            focused = true
+            results = matchingResults()
+        }
+        .onChange(of: query) {
+            highlighted = 0
+            results = matchingResults()
+        }
+        .onChange(of: suggestions) { results = matchingResults() }
+        .onChange(of: suggestionsQuery) { results = matchingResults() }
         .task(id: query) { await loadSuggestions() }
         .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(results.count - 1, 0)); return .handled }
         .onKeyPress(.upArrow) { highlighted = max(highlighted - 1, 0); return .handled }

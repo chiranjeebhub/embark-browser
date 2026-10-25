@@ -175,8 +175,13 @@ final class BrowserStore {
     }
 
 
+    /// Pages report their title and address on every load step, usually unchanged. Only real
+    /// changes are written: each write redraws the sidebar and saves the library.
     func updateTab(_ id: BrowserTab.ID, title: String?, url: URL?) {
-        for s in spaces.indices where spaces[s].pageTab(id) != nil {
+        let title = title?.isEmpty == true ? nil : title
+        for s in spaces.indices {
+            guard let tab = spaces[s].pageTab(id),
+                  (title.map { $0 != tab.title } ?? false) || (url.map { $0 != tab.url } ?? false) else { continue }
             spaces[s].updatePage(id, title: title, url: url)
         }
     }

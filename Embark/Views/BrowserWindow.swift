@@ -36,8 +36,6 @@ struct BrowserWindow: View {
         // The Create a Space form previews its theme on the whole window; a swipe between
         // spaces fades toward the next space's theme as it goes.
         let theme = store.draftTheme ?? store.selectedSpace?.resolvedTheme ?? SpaceTheme(tint: .graphite)
-        let neighborTheme = store.draftTheme == nil
-            ? store.neighborSpace(towardProgress: store.swipeProgress)?.resolvedTheme : nil
         let tint = theme.accent
         let isPageFullscreen = self.isPageFullscreen
         let onRight = sidebarSide == .right
@@ -82,15 +80,7 @@ struct BrowserWindow: View {
         // While peeking, the card draws its own traffic lights (see CardTrafficLights). With the
         // sidebar on the right they stay above the page.
         .background(WindowButtons(isVisible: store.isSidebarVisible || onRight))
-        .background {
-            ZStack {
-                ThemeBackground(theme: theme)
-                if let neighborTheme {
-                    ThemeBackground(theme: neighborTheme).opacity(Double(abs(store.swipeProgress)))
-                }
-            }
-            .ignoresSafeArea()
-        }
+        .background { WindowBackground(theme: theme).ignoresSafeArea() }
         .preferredColorScheme(colorScheme(for: theme.appearance))
         .ignoresSafeArea(.container, edges: .top)
         .animation(.smooth(duration: 0.35), value: store.selectedSpaceID)
@@ -234,9 +224,7 @@ struct BrowserWindow: View {
                 }
             }
             .animation(.snappy(duration: 0.18), value: pool.findTabID)
-            .overlay(alignment: .top) {
-                if let progress = pool.loadingProgress[tab.id] { LoadingBar(progress: progress) }
-            }
+            .overlay(alignment: .top) { LoadingBar(tabID: tab.id) }
             .overlay(alignment: .top) {
                 if let notice = pool.zoomNotice, visibleTabIDs.contains(notice.tabID) {
                     Text(Zoom.percent(notice.factor))
@@ -382,20 +370,42 @@ private struct PageDropHandler: DropDelegate {
     @MainActor static var pageSize = CGSize(width: 1, height: 1)
 }
 
-/// A thin bar along the page's top edge while it loads.
-private struct LoadingBar: View {
-    let progress: Double
+/// The window's theme, fading toward the next space's during a swipe. Its own view so a swipe
+/// redraws only the background, not the whole window, on every frame.
+private struct WindowBackground: View {
+    let theme: SpaceTheme
+    @Environment(BrowserStore.self) private var store
 
     var body: some View {
-        GeometryReader { geo in
-            Capsule()
-                .fill(Color.accentColor)
-                .frame(width: max(24, geo.size.width * progress), height: 2.5)
-                .animation(.smooth(duration: 0.25), value: progress)
+        let neighborTheme = store.draftTheme == nil
+            ? store.neighborSpace(towardProgress: store.swipeProgress)?.resolvedTheme : nil
+        ZStack {
+            ThemeBackground(theme: theme)
+            if let neighborTheme {
+                ThemeBackground(theme: neighborTheme).opacity(Double(abs(store.swipeProgress)))
+            }
         }
-        .frame(height: 2.5)
-        .allowsHitTesting(false)
-        .transition(.opacity)
+    }
+}
+
+/// A thin bar along the page's top edge while it loads. It reads the progress itself, so
+/// progress from any tab redraws only this bar, not the window.
+private struct LoadingBar: View {
+    let tabID: BrowserTab.ID
+    @Environment(PagePool.self) private var pool
+
+    var body: some View {
+        if let progress = pool.loadingProgress[tabID] {
+            GeometryReader { geo in
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: max(24, geo.size.width * progress), height: 2.5)
+                    .animation(.smooth(duration: 0.25), value: progress)
+            }
+            .frame(height: 2.5)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
     }
 }
 

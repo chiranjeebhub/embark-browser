@@ -536,19 +536,37 @@ private struct TabList: View {
     }
 
     /// Rows other than the one being dragged, which gives up its place to the gap.
+    /// Built from lookups made in one pass, so a space with thousands of imported bookmarks in
+    /// hundreds of folders stays quick to lay out (this runs on every redraw and drag move).
     private var staying: [Row] {
         let dragged = gap == nil ? nil : SidebarDrag.current
         var rows: [Row] = []
         var shownSplits = Set<Split.ID>()
         let selectedID = space.selectedTabID
 
+        var tabsByFolder: [Folder.ID?: [BrowserTab]] = [:]
+        var tabsByID: [BrowserTab.ID: BrowserTab] = [:]
+        for tab in space.tabs {
+            tabsByFolder[tab.folderID, default: []].append(tab)
+            tabsByID[tab.id] = tab
+        }
+        var foldersByParent: [Folder.ID?: [Folder]] = [:]
+        for folder in space.allFolders { foldersByParent[folder.parentID, default: []].append(folder) }
+        var splitByTab: [BrowserTab.ID: Split] = [:]
+        for split in space.splits ?? [] { for id in split.tabIDs where splitByTab[id] == nil { splitByTab[id] = split } }
+        // The selected tab's folder and the folders around it, which keep it visible when collapsed.
+        let selectedFolderID = selectedID.flatMap { tabsByID[$0]?.folderID }
+        var selectedAncestors = Set<Folder.ID>()
+        let foldersByID = Dictionary(space.allFolders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var current = selectedFolderID
+        while let id = current, selectedAncestors.insert(id).inserted { current = foldersByID[id]?.parentID }
+
         func appendTabs(in container: Folder.ID?, depth: Int, only: BrowserTab.ID? = nil) {
-            for tab in space.tabs where tab.folderID == container && dragged != .tab(tab.id) {
-                if let only, tab.id != only, space.splits?.first(where: { $0.tabIDs.contains(only) })?.tabIDs.contains(tab.id) != true { continue }
-                if let split = space.splits?.first(where: { $0.tabIDs.contains(tab.id) }) {
+            for tab in tabsByFolder[container] ?? [] where dragged != .tab(tab.id) {
+                if let only, tab.id != only, splitByTab[only]?.tabIDs.contains(tab.id) != true { continue }
+                if let split = splitByTab[tab.id] {
                     guard dragged != .split(split.id), shownSplits.insert(split.id).inserted else { continue }
-                    rows.append(.split(split, split.tabIDs.compactMap { id in space.tabs.first { $0.id == id } },
-                                       depth: depth, container: container))
+                    rows.append(.split(split, split.tabIDs.compactMap { tabsByID[$0] }, depth: depth, container: container))
                 } else {
                     rows.append(.tab(tab, depth: depth, container: container))
                 }
@@ -559,16 +577,15 @@ private struct TabList: View {
             guard dragged != .folder(folder.id) else { return }
             rows.append(.folder(folder, depth: depth))
             if folder.isExpanded {
-                for sub in space.subfolders(of: folder.id) { appendFolder(sub, depth: depth + 1) }
+                for sub in foldersByParent[folder.id] ?? [] { appendFolder(sub, depth: depth + 1) }
                 appendTabs(in: folder.id, depth: depth + 1)
-            } else if let selectedID, let tab = space.tabs.first(where: { $0.id == selectedID }),
-                      let folderID = tab.folderID, space.folderAndDescendants(folder.id).contains(folderID) {
+            } else if let selectedID, let folderID = selectedFolderID, selectedAncestors.contains(folder.id) {
                 // Arc keeps the selected tab visible under its collapsed folder.
                 appendTabs(in: folderID, depth: depth + 1, only: selectedID)
             }
         }
 
-        for folder in space.subfolders(of: nil) { appendFolder(folder, depth: 0) }
+        for folder in foldersByParent[nil] ?? [] { appendFolder(folder, depth: 0) }
         appendTabs(in: nil, depth: 0)
         return rows
     }
@@ -583,6 +600,7 @@ private struct TabList: View {
     }
 
     var body: some View {
+        let rows = rows
         ScrollView {
             VStack(alignment: .leading, spacing: Self.spacing) {
                 Button { store.isCommandBarOpen = true } label: {

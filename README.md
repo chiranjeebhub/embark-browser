@@ -32,6 +32,9 @@ Chromium, run `scripts/fetch-cef.sh` first, then build the `EmbarkChromium` sche
 
 ### Running the Chromium build day to day
 
+Browse with a Release build (`xcodebuild -scheme EmbarkChromium -configuration Release build`).
+Debug builds run Swift and SwiftUI unoptimized and feel noticeably slower.
+
 Xcode signs local builds ad hoc, so every rebuild looks like a new app to macOS and it asks
 again for the keychain item that encrypts cookies and saved passwords ("Embark Safe Storage").
 To keep the same identity across rebuilds, sign the built app with a local self-signed
