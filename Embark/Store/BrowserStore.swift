@@ -51,7 +51,7 @@ final class BrowserStore {
     }
 
     /// Every window's store, so a new window can pick a space no other window shows.
-    private static let windows = NSHashTable<BrowserStore>.weakObjects()
+    nonisolated(unsafe) private static let windows = NSHashTable<BrowserStore>.weakObjects()
 
     /// A private window, with its own private space and profile.
     static func privateWindow() -> BrowserStore {

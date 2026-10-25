@@ -5,7 +5,7 @@ import Observation
 /// Support as JSON.
 @Observable
 final class BrowserLibrary {
-    static let shared = BrowserLibrary()
+    nonisolated(unsafe) static let shared = BrowserLibrary()
 
     var profiles: [Profile] = [] { didSet { save() } }
     var spaces: [Space] = [] { didSet { save() } }
