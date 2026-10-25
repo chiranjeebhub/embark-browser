@@ -1,22 +1,25 @@
 import SwiftUI
 
-/// ⌘T / ⌘L: one glass bar that switches tabs, opens favorites or pages from history, or goes
-/// to a URL or search.
+/// ⌘T / ⌘L: one glass bar that switches tabs, opens favorites or pages from history, runs
+/// actions like New Window, or goes to a URL or search.
 struct CommandBar: View {
     @Environment(BrowserStore.self) private var store
     @Environment(PagePool.self) private var pool
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @State private var query = ""
     @State private var highlighted = 0
     @FocusState private var focused: Bool
 
     private enum Result: Identifiable {
-        case tab(BrowserTab), favorite(Favorite), history(HistoryEntry), go(URL), search(String)
+        case tab(BrowserTab), favorite(Favorite), history(HistoryEntry), action(BrowserAction), go(URL), search(String)
 
         var id: String {
             switch self {
             case .tab(let t): "tab-\(t.id)"
             case .favorite(let f): "fav-\(f.id)"
             case .history(let h): "history-\(h.id)"
+            case .action(let a): "action-\(a.id)"
             case .go(let u): "go-\(u)"
             case .search(let q): "search-\(q)"
             }
@@ -28,6 +31,8 @@ struct CommandBar: View {
         guard let space = store.selectedSpace else { return [] }
         var out: [Result] = []
         if let url = Self.url(from: q) { out.append(.go(url)) }
+        // While splitting, only pages make sense.
+        if store.pendingSplitTabID == nil { out += BrowserAction.matching(q).prefix(3).map(Result.action) }
         let lower = q.lowercased()
         let tabs = space.tabs.filter { lower.isEmpty || $0.title.lowercased().contains(lower) || $0.url.absoluteString.lowercased().contains(lower) }
         out += tabs.prefix(5).map(Result.tab)
@@ -91,6 +96,9 @@ struct CommandBar: View {
             case .history(let entry):
                 FaviconView(url: entry.url, size: 22)
                 label(entry.title, detail: entry.url.host() ?? "History")
+            case .action(let action):
+                Image(systemName: action.symbol).frame(width: 22)
+                label(action.title, detail: "Action")
             case .go(let url):
                 Image(systemName: "globe").frame(width: 22)
                 label(url.absoluteString, detail: "Open")
@@ -121,6 +129,10 @@ struct CommandBar: View {
         case .tab(let tab): store.selectTab(tab.id)
         case .favorite(let fav): store.selectFavorite(fav.id)
         case .history(let entry): store.openTab(entry.url, title: entry.title)
+        case .action(let action):
+            close()
+            run(action)
+            return
         case .go(let url): store.openTab(url)
         case .search(let q):
             var components = URLComponents(string: "https://www.google.com/search")!
@@ -132,6 +144,35 @@ struct CommandBar: View {
             store.addToSplit(picked, beside: splitTarget)
         }
         close()
+    }
+
+    private func run(_ action: BrowserAction) {
+        let tabID = store.selectedTab?.id
+        let page = pool.existingPage(for: tabID)
+        switch action {
+        case .newWindow: openWindow(id: "browser")
+        case .newPrivateWindow: openWindow(id: "private")
+        case .newSpace: store.isCreatingSpace = true
+        case .newFolder: store.addFolder()
+        case .newSplit: store.startNewSplit()
+        case .addToFavorites: if let tab = store.selectedTab { store.addFavorite(from: tab) }
+        case .copyURL:
+            guard let url = store.selectedTab?.url else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        case .reload: page?.reload()
+        case .closeTab: if let tabID { pool.close(tabID); store.closeTab(tabID) }
+        case .reopenClosedTab: store.reopenLastClosedTab()
+        case .findOnPage: if let tabID { pool.openFind(in: tabID) }
+        case .zoomIn: pool.zoom(tabID, Zoom.zoomedIn)
+        case .zoomOut: pool.zoom(tabID, Zoom.zoomedOut)
+        case .actualSize: pool.zoom(tabID) { _ in 1 }
+        case .print: page?.print()
+        case .developerTools: page?.showDevTools()
+        case .showHistory, .clearHistory: openWindow(id: "history")
+        case .toggleSidebar: withAnimation(.sidebar) { store.isSidebarVisible.toggle() }
+        case .settings: openSettings()
+        }
     }
 
     private func close() {
