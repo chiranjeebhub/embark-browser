@@ -17,6 +17,12 @@ struct EmbarkApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
         .commands { BrowserCommands(store: store, pool: pool) }
+
+        Settings {
+            SettingsView()
+                .environment(store)
+                .environment(pool)
+        }
     }
 }
 

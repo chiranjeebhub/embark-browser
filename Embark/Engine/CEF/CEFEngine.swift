@@ -16,6 +16,10 @@ final class CEFEngine: BrowserEngine {
         ExtensionCatalog.extensions(inProfile: directory(for: profile))
     }
 
+    func removeData(for profile: Profile) {
+        try? FileManager.default.removeItem(at: directory(for: profile))
+    }
+
     /// Chromium's profile folder: cookies, logins and extensions, apart from other profiles.
     private func directory(for profile: Profile) -> URL {
         Self.cacheRoot.appending(path: "Profile-\(profile.id.uuidString)", directoryHint: .isDirectory)

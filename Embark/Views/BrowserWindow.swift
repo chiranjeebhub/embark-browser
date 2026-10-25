@@ -17,13 +17,12 @@ struct BrowserWindow: View {
     static let peekInset: CGFloat = 8
 
     var body: some View {
-        // The Create a Space form previews its tint on the whole window; a swipe between
-        // spaces blends toward the next space's tint as it goes.
-        let spaceTint = store.selectedSpace?.tint.color ?? .gray
-        let swipeTint = store.neighborSpace(towardProgress: store.swipeProgress).map {
-            spaceTint.mix(with: $0.tint.color, by: Double(abs(store.swipeProgress)))
-        }
-        let tint = store.draftTint?.color ?? swipeTint ?? spaceTint
+        // The Create a Space form previews its theme on the whole window; a swipe between
+        // spaces fades toward the next space's theme as it goes.
+        let theme = store.draftTheme ?? store.selectedSpace?.resolvedTheme ?? SpaceTheme(tint: .graphite)
+        let neighborTheme = store.draftTheme == nil
+            ? store.neighborSpace(towardProgress: store.swipeProgress)?.resolvedTheme : nil
+        let tint = theme.accent
         HStack(spacing: 0) {
             if store.isSidebarVisible {
                 Sidebar()
@@ -51,18 +50,28 @@ struct BrowserWindow: View {
         .background(WindowButtons(isVisible: store.isSidebarVisible))
         .background {
             ZStack {
-                Rectangle().fill(.background)
-                Rectangle().fill(tint.opacity(0.16))
-                Circle().fill(tint.opacity(0.35)).frame(width: 460).blur(radius: 100).offset(x: -420, y: -300)
+                ThemeBackground(theme: theme)
+                if let neighborTheme {
+                    ThemeBackground(theme: neighborTheme).opacity(Double(abs(store.swipeProgress)))
+                }
             }
             .ignoresSafeArea()
         }
+        .preferredColorScheme(colorScheme(for: theme.appearance))
         .ignoresSafeArea(.container, edges: .top)
         .animation(.smooth(duration: 0.35), value: store.selectedSpaceID)
         .animation(.snappy(duration: 0.2), value: store.isCommandBarOpen)
         .task { await sleepIdleTabs() }
         .onAppear(perform: installSidebarShortcut)
         .onDisappear { sidebarShortcut.map(NSEvent.removeMonitor); sidebarShortcut = nil }
+    }
+
+    private func colorScheme(for appearance: SpaceTheme.Appearance) -> ColorScheme? {
+        switch appearance {
+        case .light: .light
+        case .dark: .dark
+        case .system: nil
+        }
     }
 
     /// A strip along the left edge; hovering it floats the sidebar over the page, which stays put.

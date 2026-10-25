@@ -12,6 +12,11 @@ final class WebKitEngine: BrowserEngine {
         stores[profile.id] = store
         return WebKitPage(url: url, store: store)
     }
+
+    func removeData(for profile: Profile) {
+        stores[profile.id] = nil
+        Task { try? await WKWebsiteDataStore.remove(forIdentifier: profile.id) }
+    }
 }
 
 @MainActor
