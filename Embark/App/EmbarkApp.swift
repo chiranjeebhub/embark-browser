@@ -215,7 +215,15 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("New Tab") { store.isCommandBarOpen = true }
                 .keyboardShortcut("t")
-            Button("Open Location") { store.isCommandBarOpen = true }
+            Button("Open Location") {
+                // Like Arc: edit the address in the sidebar when it's showing.
+                if store.isSidebarVisible, store.selectedTab != nil, !store.isCreatingSpace,
+                   UserDefaults.standard.bool(forKey: PreferenceKey.showsAddressPill) {
+                    store.isEditingAddress = true
+                } else {
+                    store.isCommandBarOpen = true
+                }
+            }
                 .keyboardShortcut("l")
             Button("New Folder") { store.addFolder() }
                 .keyboardShortcut("n", modifiers: [.command, .option])
