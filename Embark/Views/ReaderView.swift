@@ -126,7 +126,7 @@ private struct ReaderStylePanel: View {
 
             HStack(spacing: 10) {
                 ForEach(ReaderStyle.Theme.allCases) { option in
-                    Button { theme = option } label: { ThemeSwatch(theme: option, isSelected: theme == option) }
+                    Button { theme = option } label: { ReaderThemeSwatch(theme: option, isSelected: theme == option) }
                         .buttonStyle(.plain)
                         .help(option.title)
                 }
@@ -181,7 +181,7 @@ private struct ReaderStylePanel: View {
     }
 }
 
-private struct ThemeSwatch: View {
+private struct ReaderThemeSwatch: View {
     let theme: ReaderStyle.Theme
     let isSelected: Bool
 
