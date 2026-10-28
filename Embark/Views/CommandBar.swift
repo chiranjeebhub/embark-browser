@@ -12,79 +12,29 @@ struct CommandBar: View {
     /// The engine's suggestions for `suggestionsQuery`.
     @State private var suggestions: [String] = []
     @State private var suggestionsQuery = ""
-    /// Worked out when the query or suggestions change, not on every redraw or arrow key:
-    /// searching history goes through up to 20,000 pages.
-    @State private var results: [Result] = []
+    /// Worked out when the query or suggestions change, not on every redraw or arrow key.
+    @State private var results: [OmniboxResult] = []
     @FocusState private var focused: Bool
 
-    private enum Result: Identifiable {
-        case tab(BrowserTab), favorite(Favorite), history(HistoryEntry), action(BrowserAction), go(URL), search(String), suggestion(String)
-
-        var id: String {
-            switch self {
-            case .tab(let t): "tab-\(t.id)"
-            case .favorite(let f): "fav-\(f.id)"
-            case .history(let h): "history-\(h.id)"
-            case .action(let a): "action-\(a.id)"
-            case .go(let u): "go-\(u)"
-            case .search(let q): "search-\(q)"
-            case .suggestion(let q): "suggestion-\(q)"
-            }
-        }
+    private func matchingResults() -> [OmniboxResult] {
+        Omnibox.results(for: query, sources: .commandBar, store: store, pool: pool,
+                        suggestions: suggestions, suggestionsQuery: suggestionsQuery)
     }
 
-    private func matchingResults() -> [Result] {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard let space = store.selectedSpace else { return [] }
-        var out: [Result] = []
-        if let url = Self.url(from: q) { out.append(.go(url)) }
-        // While splitting, only pages make sense.
-        if store.pendingSplitTabID == nil { out += BrowserAction.matching(q).prefix(3).map(Result.action) }
-        let lower = q.lowercased()
-        let tabs = space.tabs.filter { lower.isEmpty || $0.title.lowercased().contains(lower) || $0.url.absoluteString.lowercased().contains(lower) }
-        out += tabs.prefix(5).map(Result.tab)
-        let favs = space.favorites.filter { !lower.isEmpty && $0.title.lowercased().contains(lower) }
-        out += favs.prefix(3).map(Result.favorite)
-        if !lower.isEmpty {
-            // Pages already open as a tab or favorite show up above instead.
-            let open = Set(space.tabs.map(\.url) + space.favorites.map(\.url))
-            let visited = pool.history.search(q, profileID: space.profileID, limit: 12).filter { !open.contains($0.url) }
-            out += visited.prefix(5).map(Result.history)
-        }
-        if !q.isEmpty {
-            out.append(.search(q))
-            if suggestionsQuery == q { out += suggestions.map(Result.suggestion) }
-        }
-        return out
+    /// The field's glyph follows what Return would do.
+    private var fieldSymbol: String {
+        if store.pendingSplitTabID != nil { return "rectangle.split.2x1" }
+        return Omnibox.url(from: query.trimmingCharacters(in: .whitespaces)) == nil ? "magnifyingglass" : "globe"
     }
 
     var body: some View {
-        // Sits over the page area; the field starts near its middle and results grow downward.
+        // Sits over the page area in its upper third, as in Arc; results grow downward.
         GeometryReader { geo in
             ZStack(alignment: .top) {
-                Color.black.opacity(0.12).onTapGesture { close() }
-                VStack(spacing: 6) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("Search tabs, or type a URL", text: $query)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 19))
-                            .focused($focused)
-                            .onSubmit { activate(highlighted) }
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(height: 54)
-                    .background(.white.opacity(0.5), in: .rect(cornerRadius: 16))
-
-                    ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
-                        row(result, highlighted: index == highlighted)
-                            .onTapGesture { activate(index) }
-                    }
-                }
-                .padding(10)
-                .frame(width: min(640, geo.size.width - 48))
-                .glassEffect(.regular, in: .rect(cornerRadius: 24))
-                .padding(.top, max(24, geo.size.height * 0.5 - 37))
+                Color.black.opacity(0.18).onTapGesture { close() }
+                panel
+                    .frame(width: min(680, geo.size.width - 48))
+                    .padding(.top, max(24, geo.size.height * 0.2))
             }
         }
         .onAppear {
@@ -93,6 +43,7 @@ struct CommandBar: View {
                 store.commandBarSeed = ""
                 Self.moveCaretToEnd()
             }
+            store.isEditingAddress = false
             focused = true
             results = matchingResults()
         }
@@ -102,50 +53,101 @@ struct CommandBar: View {
         }
         .onChange(of: suggestions) { results = matchingResults() }
         .onChange(of: suggestionsQuery) { results = matchingResults() }
-        .task(id: query) { await loadSuggestions() }
+        .task(id: query) {
+            guard let fetched = await Omnibox.suggestions(for: query, isPrivate: store.isPrivate) else { return }
+            suggestions = fetched
+            suggestionsQuery = query.trimmingCharacters(in: .whitespaces)
+        }
         .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(results.count - 1, 0)); return .handled }
         .onKeyPress(.upArrow) { highlighted = max(highlighted - 1, 0); return .handled }
         .onKeyPress(.escape) { close(); return .handled }
     }
 
-    @ViewBuilder private func row(_ result: Result, highlighted: Bool) -> some View {
-        HStack(spacing: 12) {
-            switch result {
-            case .tab(let tab):
-                FaviconView(url: tab.url, size: 22)
-                label(tab.title, detail: "Switch to tab")
-            case .favorite(let fav):
-                FaviconView(url: fav.url, size: 22)
-                label(fav.title, detail: "Favorite")
-            case .history(let entry):
-                FaviconView(url: entry.url, size: 22)
-                label(entry.title, detail: entry.url.host() ?? "History")
-            case .action(let action):
-                Image(systemName: action.symbol).frame(width: 22)
-                label(action.title, detail: "Action")
-            case .go(let url):
-                Image(systemName: "globe").frame(width: 22)
-                label(url.absoluteString, detail: "Open")
-            case .search(let q):
-                Image(systemName: "magnifyingglass").frame(width: 22)
-                label("Search for \u{201C}\(q)\u{201D}", detail: SearchEngine.current().title)
-            case .suggestion(let q):
-                Image(systemName: "magnifyingglass").frame(width: 22).foregroundStyle(.secondary)
-                label(q, detail: "Search")
+    private var panel: some View {
+        let accent = store.selectedSpace?.accent ?? .accentColor
+        return VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: fieldSymbol)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+                    .contentTransition(.symbolEffect(.replace))
+                TextField(store.pendingSplitTabID == nil ? "Search or Enter URL…" : "Open a page beside this one…", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 21))
+                    .focused($focused)
+                    .onSubmit { activate(highlighted) }
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear")
+                }
+            }
+            .padding(.horizontal, 18)
+            .frame(height: 60)
+
+            if !results.isEmpty {
+                Divider().opacity(0.6).padding(.horizontal, 12)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
+                                if let header = header(before: index) {
+                                    Text(header)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 10)
+                                        .padding(.top, index == 0 ? 2 : 8)
+                                        .padding(.bottom, 2)
+                                }
+                                OmniboxRow(result: result, isHighlighted: index == highlighted, accent: accent)
+                                    .id(result.id)
+                                    .onTapGesture { activate(index) }
+                            }
+                        }
+                        .padding(8)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: 440)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onChange(of: highlighted) { _, index in
+                        guard results.indices.contains(index) else { return }
+                        proxy.scrollTo(results[index].id)
+                    }
+                }
             }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 50)
-        .background(highlighted ? AnyShapeStyle(.white.opacity(0.7)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 14))
-        .contentShape(.rect)
+        .background {
+            // Opaque enough to read over any page, still glass at the edges.
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.72))
+        }
+        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.28), radius: 40, y: 18)
+        .animation(.snappy(duration: 0.18), value: results.map(\.id))
     }
 
-    private func label(_ title: String, detail: String) -> some View {
-        HStack {
-            Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
-            Spacer()
-            Text(detail).font(.caption).foregroundStyle(.secondary)
+    /// With nothing typed, the results are the open tabs and then recent pages; each gets a
+    /// heading so the list doesn't read as one jumble.
+    private func header(before index: Int) -> String? {
+        guard query.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        let kind: (OmniboxResult) -> String? = { result in
+            switch result {
+            case .tab: "Open Tabs"
+            case .history: "Recently Visited"
+            default: nil
+            }
         }
+        let current = kind(results[index])
+        guard let current else { return nil }
+        return index == 0 || kind(results[index - 1]) != current ? current : nil
     }
 
     private func activate(_ index: Int) {
@@ -200,21 +202,6 @@ struct CommandBar: View {
         }
     }
 
-    /// Asks the search engine once typing pauses. Addresses, and private windows, don't ask.
-    private func loadSuggestions() async {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty, !store.isPrivate, Self.url(from: q) == nil else {
-            suggestions = []
-            return
-        }
-        try? await Task.sleep(for: .milliseconds(150))
-        guard !Task.isCancelled else { return }
-        let fetched = await SearchSuggestions.fetch(q)
-        guard !Task.isCancelled else { return }
-        suggestions = fetched
-        suggestionsQuery = q
-    }
-
     /// A field that takes focus selects all its text, so the next key typed would replace
     /// what the new tab page passed on. Puts the caret after it once the field has focus.
     private static func moveCaretToEnd() {
@@ -229,13 +216,5 @@ struct CommandBar: View {
     private func close() {
         store.pendingSplitTabID = nil
         store.isCommandBarOpen = false
-    }
-
-    /// Treats "example.com" or a full URL as an address; anything with spaces is a search.
-    static func url(from text: String) -> URL? {
-        guard !text.isEmpty, !text.contains(" ") else { return nil }
-        if text.hasPrefix("http://") || text.hasPrefix("https://") { return URL(string: text) }
-        guard text.contains("."), let url = URL(string: "https://\(text)"), url.host() != nil else { return nil }
-        return url
     }
 }

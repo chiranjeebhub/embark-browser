@@ -23,6 +23,9 @@ struct Sidebar: View {
         // Same side margin as the traffic lights' left inset.
         .padding(.horizontal, Self.margin)
         .padding(.bottom, 6)
+        .overlayPreferenceValue(AddressPillBoundsKey.self) { anchor in
+            if store.isEditingAddress, let anchor { addressEditor(at: anchor) }
+        }
         .animation(.snappy(duration: 0.22), value: store.isCreatingSpace)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             swipe.frame = frame
@@ -53,6 +56,23 @@ struct Sidebar: View {
         .padding(.horizontal, Self.margin)
         .clipped()
         .padding(.horizontal, -Self.margin)
+    }
+
+    /// The address editor, open over the pill. A click anywhere else in the sidebar closes it.
+    private func addressEditor(at anchor: Anchor<CGRect>) -> some View {
+        GeometryReader { geo in
+            let pill = geo[anchor]
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture { store.isEditingAddress = false }
+                AddressEditor(url: store.selectedTab?.url)
+                    .frame(width: pill.width + 8)
+                    .offset(x: pill.minX - 4, y: pill.minY - 4)
+                    .id(store.selectedTab?.id)
+            }
+        }
+        .transition(.opacity)
     }
 
     static let margin: CGFloat = 10
@@ -177,7 +197,8 @@ private struct AddressPill: View {
             .foregroundStyle(.primary.opacity(0.75))
             .frame(maxHeight: .infinity)
             .contentShape(.rect)
-            .onTapGesture { store.isCommandBarOpen = true }
+            // Opens the address editor over the pill (see AddressEditor), as in Arc.
+            .onTapGesture { store.isEditingAddress = true }
 
             if let url {
                 if justCopied {
@@ -211,7 +232,9 @@ private struct AddressPill: View {
         .padding(.leading, 12)
         .padding(.trailing, 4)
         .frame(height: 34)
+        .opacity(store.isEditingAddress ? 0 : 1)
         .background(RoundedRectangle(cornerRadius: 9.5).fill(colorScheme == .dark ? .white.opacity(0.11) : .black.opacity(0.05)))
+        .anchorPreference(key: AddressPillBoundsKey.self, value: .bounds) { $0 }
         .animation(.snappy(duration: 0.15), value: justCopied)
     }
 
