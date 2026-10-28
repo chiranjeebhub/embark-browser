@@ -105,3 +105,30 @@ struct CertificateWarningView: View {
         .background(.background)
     }
 }
+
+/// Covers a page whose renderer crashed, as Chrome's "Aw, Snap!" does, until it's reloaded.
+struct CrashedPageView: View {
+    let tabID: BrowserTab.ID
+    let outOfMemory: Bool
+    @Environment(PagePool.self) private var pool
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: outOfMemory ? "memorychip" : "exclamationmark.triangle.fill")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text(outOfMemory ? "This page ran out of memory" : "This page crashed")
+                .font(.system(size: 20, weight: .semibold))
+            Text("Reload it to pick up where you left off.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+            Button("Reload") { pool.reloadCrashedTab(tabID) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
+    }
+}

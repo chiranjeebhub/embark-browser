@@ -210,6 +210,10 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
         }
     }
 
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, renderProcessTerminatedOutOfMemory outOfMemory: Bool) {
+        MainActor.assumeIsolated { delegate?.page(self, didCrashOutOfMemory: outOfMemory) }
+    }
+
     // MARK: Page info
 
     var security: PageSecurity {

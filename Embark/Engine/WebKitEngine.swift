@@ -62,6 +62,8 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
         let config = WKWebViewConfiguration()
         config.websiteDataStore = store
         config.preferences.isElementFullscreenEnabled = true
+        // Streaming sites check for Safari before they play anything.
+        config.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
         webView.navigationDelegate = self
@@ -95,6 +97,10 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
         observations.removeAll()
         webView.stopLoading()
         webView.removeFromSuperview()
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        delegate?.page(self, didCrashOutOfMemory: false)
     }
 
     private func reportLoading() {

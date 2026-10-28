@@ -63,6 +63,9 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
                description:(NSString *)description
                    respond:(void (^)(BOOL proceed))respond
     NS_SWIFT_NAME(cefBrowser(_:certificateErrorFor:description:respond:));
+/// The page's renderer process ended, from a crash or from running out of memory.
+- (void)cefBrowser:(EMBCEFBrowser *)browser renderProcessTerminatedOutOfMemory:(BOOL)outOfMemory
+    NS_SWIFT_NAME(cefBrowser(_:renderProcessTerminatedOutOfMemory:));
 /// A video or other element went full screen inside the page, or came out of it.
 - (void)cefBrowser:(EMBCEFBrowser *)browser didChangeFullscreen:(BOOL)fullscreen NS_SWIFT_NAME(cefBrowser(_:didChangeFullscreen:));
 @end
