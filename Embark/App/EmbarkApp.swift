@@ -232,6 +232,12 @@ struct BrowserCommands: Commands {
             Button("Reopen Closed Tab") { store.reopenLastClosedTab() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
                 .disabled(store.selectedSpace?.recentlyClosed?.isEmpty ?? true)
+            Menu("Recently Closed") {
+                ForEach((store.selectedSpace?.recentlyClosed ?? []).suffix(20).reversed()) { tab in
+                    Button(tab.title.isEmpty ? (tab.url.host() ?? "Untitled") : tab.title) { store.reopenClosedTab(tab.id) }
+                }
+            }
+            .disabled(store.selectedSpace?.recentlyClosed?.isEmpty ?? true)
             Divider()
             Button("Print…") { selectedPage?.print() }
                 .keyboardShortcut("p")
