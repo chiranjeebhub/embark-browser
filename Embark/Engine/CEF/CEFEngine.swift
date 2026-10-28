@@ -10,8 +10,14 @@ final class CEFEngine: BrowserEngine {
         if profile.isPrivate == true {
             return CEFPage(browser: EMBCEFBrowser(url: url, privateSessionID: profile.id.uuidString))
         }
-        return CEFPage(browser: EMBCEFBrowser(url: url, profileDirectory: directory(for: profile)))
+        let browser = EMBCEFBrowser(url: url, profileDirectory: directory(for: profile))
+        // Notices sign-ins, for saved passwords. Private windows save none.
+        browser.documentScript = Self.loginScript
+        browser.loginMessagePrefix = LoginScript.consolePrefix
+        return CEFPage(browser: browser)
     }
+
+    private static let loginScript = LoginScript.source(for: .console)
 
     var supportsExtensions: Bool { true }
 
@@ -208,6 +214,14 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
         MainActor.assumeIsolated {
             delegate?.page(self, hitCertificateError: CertificateWarning(url: url, description: description) { respond($0) })
         }
+    }
+
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didPostLoginMessage message: String) {
+        MainActor.assumeIsolated { delegate?.page(self, didPostLoginMessage: message) }
+    }
+
+    func fillLogin(username: String, password: String) {
+        browser.runScript(LoginScript.fillCall(username: username, password: password))
     }
 
     nonisolated func cefBrowser(_ browser: EMBCEFBrowser, renderProcessTerminatedOutOfMemory outOfMemory: Bool) {

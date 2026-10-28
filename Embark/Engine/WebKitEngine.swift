@@ -64,8 +64,15 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
         config.preferences.isElementFullscreenEnabled = true
         // Streaming sites check for Safari before they play anything.
         config.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+        // Notices sign-ins, for saved passwords. Private windows save none.
+        let relay = LoginMessageRelay()
+        if store.isPersistent {
+            config.userContentController.addUserScript(WKUserScript(source: Self.loginScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            config.userContentController.add(relay, name: "embarkLogin")
+        }
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
+        relay.page = self
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -94,9 +101,20 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
     func print() { webView.printOperation(with: .shared).runModal(for: webView.window ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil) }
 
     func close() {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "embarkLogin")
         observations.removeAll()
         webView.stopLoading()
         webView.removeFromSuperview()
+    }
+
+    private static let loginScript = LoginScript.source(for: .webKit)
+
+    fileprivate func receivedLoginMessage(_ message: String) {
+        delegate?.page(self, didPostLoginMessage: message)
+    }
+
+    func fillLogin(username: String, password: String) {
+        webView.evaluateJavaScript(LoginScript.fillCall(username: username, password: password))
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -116,5 +134,17 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url { delegate?.page(self, requestsNewTab: url) }
         return nil
+    }
+}
+
+/// Hands the sign-in script's messages to the page without the content controller keeping the
+/// page alive.
+@MainActor
+private final class LoginMessageRelay: NSObject, WKScriptMessageHandler {
+    weak var page: WebKitPage?
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let body = message.body as? String else { return }
+        MainActor.assumeIsolated { page?.receivedLoginMessage(body) }
     }
 }

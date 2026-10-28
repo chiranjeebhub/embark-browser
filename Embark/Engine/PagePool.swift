@@ -25,6 +25,14 @@ final class PagePool: BrowserPageDelegate {
     private(set) var activeStoreID: ObjectIdentifier?
     /// Pages visited, per profile.
     let history = HistoryStore()
+    /// Saved passwords, in the Keychain.
+    let passwords = PasswordStore()
+    /// Tabs whose page shows a password field.
+    private(set) var loginForms: Set<BrowserTab.ID> = []
+    /// "Save password?" waiting on each tab.
+    private(set) var pendingLogins: [BrowserTab.ID: PendingLogin] = [:]
+    /// A sign-in started on each tab, saved once it goes through.
+    @ObservationIgnored private var loginCandidates: [BrowserTab.ID: (url: URL, login: PendingLogin)] = [:]
     /// Each open page's profile and the address last recorded for it.
     @ObservationIgnored private var pageProfiles: [BrowserTab.ID: Profile.ID] = [:]
     @ObservationIgnored private var profilesByTab: [BrowserTab.ID: Profile] = [:]
@@ -134,6 +142,7 @@ final class PagePool: BrowserPageDelegate {
         engine.removeData(for: profile)
         mediaEngine?.removeData(for: profile)
         history.removeProfile(profile.id)
+        if profile.isPrivate != true { passwords.removeProfile(profile.id) }
     }
 
     func activate(_ store: BrowserStore) {
@@ -230,6 +239,9 @@ final class PagePool: BrowserPageDelegate {
         profilesByTab[id] = nil
         mediaPages.remove(id)
         crashedTabs[id] = nil
+        loginForms.remove(id)
+        pendingLogins[id] = nil
+        loginCandidates[id] = nil
         recordedURLs[id] = nil
         liveTitles[id] = nil
         liveURLs[id] = nil
@@ -286,6 +298,11 @@ final class PagePool: BrowserPageDelegate {
 
     func page(_ page: BrowserPage, didChangeTitle title: String?, url: URL?) {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
+        if let url, let previous = liveURLs[id], previous != url {
+            // A new page: its form reports itself again, and a sign-in that led here went through.
+            if loginForms.contains(id) { loginForms.remove(id) }
+            if let candidate = loginCandidates[id], candidate.url != url { offerToSave(id) }
+        }
         store?.updateTab(id, title: title, url: url)
         if let title { liveTitles[id] = title }
         if let url { liveURLs[id] = url }
@@ -321,6 +338,55 @@ final class PagePool: BrowserPageDelegate {
         crashedTabs[id] = outOfMemory
         loadingProgress[id] = nil
         if fullscreenTabID == id { fullscreenTabID = nil }
+    }
+
+    // MARK: Passwords
+
+    func page(_ page: BrowserPage, didPostLoginMessage message: String) {
+        guard let id = tabIDs[ObjectIdentifier(page)], !privatePages.contains(id),
+              let message = LoginMessage.parse(message) else { return }
+        switch message {
+        case .form:
+            if !loginForms.contains(id) { loginForms.insert(id) }
+        case .candidate(let username, let password):
+            guard let url = liveURLs[id] ?? store?.selectedTab?.url, let host = LoginHost.of(url) else { return }
+            loginCandidates[id] = (url, PendingLogin(host: host, username: username, password: password, isUpdate: false))
+        case .formGone:
+            offerToSave(id)
+        }
+    }
+
+    /// Shows "Save password?" for the tab's sign-in, unless it's saved already or the site is
+    /// one never to save.
+    private func offerToSave(_ id: BrowserTab.ID) {
+        guard var login = loginCandidates.removeValue(forKey: id)?.login, let profileID = pageProfiles[id],
+              !passwords.neverSaveHosts.contains(login.host) else { return }
+        if let saved = passwords.logins(for: login.host, profileID: profileID).first(where: { $0.username == login.username }) {
+            guard passwords.password(for: saved) != login.password else { return }
+            login.isUpdate = true
+        }
+        pendingLogins[id] = login
+    }
+
+    func answerSaveLogin(for id: BrowserTab.ID, save: Bool, never: Bool = false) {
+        guard let login = pendingLogins.removeValue(forKey: id) else { return }
+        if never { passwords.neverSave(login.host) }
+        if save, let profileID = pageProfiles[id] {
+            passwords.save(host: login.host, username: login.username, password: login.password, profileID: profileID)
+        }
+    }
+
+    /// Logins saved for the site a tab shows, in its profile.
+    func savedLogins(for id: BrowserTab.ID) -> [SavedLogin] {
+        guard let profileID = pageProfiles[id], let host = LoginHost.of(liveURLs[id]) else { return [] }
+        return passwords.logins(for: host, profileID: profileID)
+    }
+
+    /// Fills the page's sign-in form, only if the page is still on the login's site.
+    func fill(_ login: SavedLogin, in id: BrowserTab.ID) {
+        guard let page = pages[id], LoginHost.of(liveURLs[id]) == login.host, pageProfiles[id] == login.profileID,
+              let password = passwords.password(for: login) else { return }
+        page.fillLogin(username: login.username, password: password)
     }
 
     func reloadCrashedTab(_ id: BrowserTab.ID) {

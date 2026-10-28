@@ -215,6 +215,7 @@ private:
 - (void)handleFindCount:(int)count active:(int)active;
 - (void)handleFullscreen:(BOOL)fullscreen;
 - (void)handleRenderProcessTerminatedOutOfMemory:(BOOL)outOfMemory;
+- (void)handleLoginMessage:(NSString *)message;
 @end
 
 namespace {
@@ -577,6 +578,20 @@ public:
         return true;
     }
 
+    void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
+        NSString *script = owner_.documentScript;
+        if (frame->IsMain() && script.length) frame->ExecuteJavaScript(script.UTF8String, frame->GetURL(), 0);
+    }
+
+    bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString &message, const CefString &, int) override {
+        NSString *prefix = owner_.loginMessagePrefix;
+        if (!prefix.length) return false;
+        NSString *text = @(message.ToString().c_str());
+        if (![text hasPrefix:prefix]) return false;
+        [owner_ handleLoginMessage:[text substringFromIndex:prefix.length]];
+        return true;
+    }
+
     void OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus status, int, const CefString &) override {
         [owner_ handleRenderProcessTerminatedOutOfMemory:status == TS_PROCESS_OOM];
     }
@@ -933,6 +948,16 @@ private:
 }
 
 - (void)handleFullscreen:(BOOL)fullscreen { [self.delegate cefBrowser:self didChangeFullscreen:fullscreen]; }
+
+- (void)handleLoginMessage:(NSString *)message {
+    [self.delegate cefBrowser:self didPostLoginMessage:message];
+}
+
+- (void)runScript:(NSString *)script {
+    if (!_browser) return;
+    auto frame = _browser->GetMainFrame();
+    if (frame) frame->ExecuteJavaScript(script.UTF8String, frame->GetURL(), 0);
+}
 
 - (void)handleRenderProcessTerminatedOutOfMemory:(BOOL)outOfMemory {
     [self.delegate cefBrowser:self renderProcessTerminatedOutOfMemory:outOfMemory];
