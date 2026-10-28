@@ -182,9 +182,16 @@ final class PageTools {
 
     func loadSupportedLanguages() async {
         guard supportedLanguages.isEmpty else { return }
-        let languages = await LanguageAvailability().supportedLanguages
-        supportedLanguages = Set(languages.map(\.minimalIdentifier))
+        supportedLanguages = Set(await Self.translatableLanguages())
             .sorted { PageLanguage.name($0).localizedStandardCompare(PageLanguage.name($1)) == .orderedAscending }
+    }
+
+    nonisolated private static func translatableLanguages() async -> [String] {
+        await LanguageAvailability().supportedLanguages.map(\.minimalIdentifier)
+    }
+
+    nonisolated static func availability(from source: String, to target: String) async -> LanguageAvailability.Status {
+        await LanguageAvailability().status(from: Locale.Language(identifier: source), to: Locale.Language(identifier: target))
     }
 
     /// The next texts for `job` to translate: nil once the job is over, empty when there's

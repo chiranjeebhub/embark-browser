@@ -159,8 +159,7 @@ struct TranslatePopover: View {
 
     private func checkAvailability() async {
         guard !source.isEmpty else { availability = nil; return }
-        availability = await LanguageAvailability().status(from: Locale.Language(identifier: source),
-                                                           to: Locale.Language(identifier: target))
+        availability = await PageTools.availability(from: source, to: target)
     }
 
     private func title(for state: PageTools.TranslationState?) -> String {
@@ -196,7 +195,7 @@ struct TranslationHost: View {
         Color.clear
             .frame(width: 0, height: 0)
             .translationTask(configuration) { session in
-                guard let job = await tools.job else { return }
+                guard let job = tools.job else { return }
                 await TranslationRunner.run(job, session: session, tools: tools)
             }
             .onChange(of: tools.job, initial: true) { _, job in start(job) }
