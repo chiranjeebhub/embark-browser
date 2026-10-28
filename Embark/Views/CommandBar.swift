@@ -187,6 +187,9 @@ struct CommandBar: View {
             guard let url = store.selectedTab?.url else { return }
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        case .sharePage: if let url = store.selectedTab?.url { PageSharing.share(url) }
+        case .showReader: pool.tools.toggleReader(tabID)
+        case .translatePage: pool.tools.toggleTranslation(tabID)
         case .reload: page?.reload()
         case .closeTab: if let tabID { pool.close(tabID); store.closeTab(tabID) }
         case .reopenClosedTab: store.reopenLastClosedTab()

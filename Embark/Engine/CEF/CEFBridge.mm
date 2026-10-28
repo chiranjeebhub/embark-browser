@@ -216,6 +216,7 @@ private:
 - (void)handleFullscreen:(BOOL)fullscreen;
 - (void)handleRenderProcessTerminatedOutOfMemory:(BOOL)outOfMemory;
 - (void)handleLoginMessage:(NSString *)message;
+- (void)handleScriptResult:(NSString *)result;
 @end
 
 namespace {
@@ -585,9 +586,14 @@ public:
 
     bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString &message, const CefString &, int) override {
         NSString *prefix = owner_.loginMessagePrefix;
-        if (!prefix.length) return false;
+        NSString *resultPrefix = owner_.scriptResultPrefix;
+        if (!prefix.length && !resultPrefix.length) return false;
         NSString *text = @(message.ToString().c_str());
-        if (![text hasPrefix:prefix]) return false;
+        if (resultPrefix.length && [text hasPrefix:resultPrefix]) {
+            [owner_ handleScriptResult:[text substringFromIndex:resultPrefix.length]];
+            return true;
+        }
+        if (!prefix.length || ![text hasPrefix:prefix]) return false;
         [owner_ handleLoginMessage:[text substringFromIndex:prefix.length]];
         return true;
     }
@@ -951,6 +957,10 @@ private:
 
 - (void)handleLoginMessage:(NSString *)message {
     [self.delegate cefBrowser:self didPostLoginMessage:message];
+}
+
+- (void)handleScriptResult:(NSString *)result {
+    [self.delegate cefBrowser:self didReturnScriptResult:result];
 }
 
 - (void)runScript:(NSString *)script {

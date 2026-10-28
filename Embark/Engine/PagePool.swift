@@ -27,6 +27,8 @@ final class PagePool: BrowserPageDelegate {
     let history = HistoryStore()
     /// Saved passwords, in the Keychain.
     let passwords = PasswordStore()
+    /// Reader mode and translation.
+    let tools = PageTools()
     /// Tabs whose page shows a password field.
     private(set) var loginForms: Set<BrowserTab.ID> = []
     /// "Save password?" waiting on each tab.
@@ -79,6 +81,7 @@ final class PagePool: BrowserPageDelegate {
     init(engine: BrowserEngine = Engines.make(), mediaEngine: BrowserEngine? = Engines.makeMediaEngine()) {
         self.engine = engine
         self.mediaEngine = mediaEngine
+        tools.pool = self
         engine.observeDownloads { name in
             Download.destination(for: name, in: Self.downloadsFolder)
         } update: { [weak self] download in
@@ -248,6 +251,7 @@ final class PagePool: BrowserPageDelegate {
         loadingProgress[id] = nil
         zoomedHosts[id] = nil
         privatePages.remove(id)
+        tools.forget(id)
         credentialRequests.removeValue(forKey: id)?.respond(nil, nil)
         certificateWarnings.removeValue(forKey: id)?.respond(false)
         guard let page = pages.removeValue(forKey: id) else { return }
@@ -304,6 +308,7 @@ final class PagePool: BrowserPageDelegate {
             if let candidate = loginCandidates[id], candidate.url != url { offerToSave(id) }
         }
         store?.updateTab(id, title: title, url: url)
+        if let url { tools.page(id, didChangeURL: url) }
         if let title { liveTitles[id] = title }
         if let url { liveURLs[id] = url }
         recordHistory(for: id, title: title, url: url)
@@ -445,6 +450,7 @@ final class PagePool: BrowserPageDelegate {
         loadingProgress[id] = isLoading ? max(progress, loadingProgress[id] ?? 0) : nil
         // Toolbar buttons only care about starting and stopping, not each progress step.
         if wasLoading != isLoading { revision += 1 }
+        if wasLoading, !isLoading { tools.pageFinishedLoading(id) }
     }
 
     func page(_ page: BrowserPage, didChangeFavicon png: Data?) {

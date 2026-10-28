@@ -8,12 +8,15 @@ final class CEFEngine: BrowserEngine {
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
         if profile.isPrivate == true {
-            return CEFPage(browser: EMBCEFBrowser(url: url, privateSessionID: profile.id.uuidString))
+            let browser = EMBCEFBrowser(url: url, privateSessionID: profile.id.uuidString)
+            browser.scriptResultPrefix = CEFPage.scriptResultPrefix
+            return CEFPage(browser: browser)
         }
         let browser = EMBCEFBrowser(url: url, profileDirectory: directory(for: profile))
         // Notices sign-ins, for saved passwords. Private windows save none.
         browser.documentScript = Self.loginScript
         browser.loginMessagePrefix = LoginScript.consolePrefix
+        browser.scriptResultPrefix = CEFPage.scriptResultPrefix
         return CEFPage(browser: browser)
     }
 
@@ -222,6 +225,45 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
 
     func fillLogin(username: String, password: String) {
         browser.runScript(LoginScript.fillCall(username: username, password: password))
+    }
+
+    // MARK: Scripts
+
+    /// Results of `evaluate` come back as console lines starting with this, then "<id>:<json>".
+    static let scriptResultPrefix = "\u{1}embark-result:"
+    private var scriptCompletions: [Int: @MainActor (String?) -> Void] = [:]
+    private var nextScriptID = 0
+
+    func evaluate(_ script: String, completion: @escaping @MainActor (String?) -> Void) {
+        nextScriptID += 1
+        let id = nextScriptID
+        scriptCompletions[id] = completion
+        let prefix = LoginScript.literal(Self.scriptResultPrefix + "\(id):")
+        // Pages sometimes replace console.log; a fresh frame's copy still reaches Chromium.
+        browser.runScript("""
+        (async () => {
+          let log = console.log.bind(console), frame = null;
+          if (!/\\[native code\\]/.test(Function.prototype.toString.call(console.log))) {
+            frame = document.createElement('iframe');
+            frame.style.display = 'none';
+            document.documentElement.appendChild(frame);
+            log = frame.contentWindow.console.log.bind(frame.contentWindow.console);
+          }
+          let value = null;
+          try { value = JSON.stringify(await (\(script)) ?? null); } catch (e) {}
+          log(\(prefix) + (value ?? ''));
+          frame?.remove();
+        })();
+        """)
+    }
+
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didReturnScriptResult result: String) {
+        MainActor.assumeIsolated {
+            guard let colon = result.firstIndex(of: ":"), let id = Int(result[..<colon]),
+                  let completion = scriptCompletions.removeValue(forKey: id) else { return }
+            let value = result[result.index(after: colon)...]
+            completion(value.isEmpty ? nil : String(value))
+        }
     }
 
     nonisolated func cefBrowser(_ browser: EMBCEFBrowser, renderProcessTerminatedOutOfMemory outOfMemory: Bool) {

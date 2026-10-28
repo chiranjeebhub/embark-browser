@@ -117,6 +117,13 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
         webView.evaluateJavaScript(LoginScript.fillCall(username: username, password: password))
     }
 
+    func evaluate(_ script: String, completion: @escaping @MainActor (String?) -> Void) {
+        // Its own content world, so the page's scripts can't see or change Embark's.
+        webView.callAsyncJavaScript("return JSON.stringify(await (\(script)) ?? null)", in: nil, in: .defaultClient) { result in
+            completion(try? result.get() as? String)
+        }
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         delegate?.page(self, didCrashOutOfMemory: false)
     }
