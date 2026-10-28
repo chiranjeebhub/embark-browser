@@ -1,26 +1,23 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The sidebar's downloads button. It appears once something downloads, shows overall
-/// progress as a ring, and opens the list by itself when a new download starts.
+/// The sidebar's downloads button, bottom left. It shows overall progress as a ring and
+/// opens the list by itself when a new download starts.
 struct DownloadsButton: View {
     @Environment(PagePool.self) private var pool
     @State private var showsList = false
 
     var body: some View {
-        if !pool.downloads.isEmpty {
-            Button { showsList = true } label: {
-                Image(systemName: pool.activeDownloads.isEmpty ? "arrow.down.circle" : "arrow.down")
-                    .font(.system(size: pool.activeDownloads.isEmpty ? 15 : 10, weight: .semibold))
-                    .overlay {
-                        if !pool.activeDownloads.isEmpty { ProgressRing(fraction: overallFraction).frame(width: 17, height: 17) }
-                    }
-            }
-            .help("Downloads")
-            .popover(isPresented: $showsList, arrowEdge: .top) { DownloadsPopover() }
-            .onChange(of: pool.downloadStartCount) { showsList = true }
-            .transition(.scale.combined(with: .opacity))
+        Button { showsList = true } label: {
+            Image(systemName: pool.activeDownloads.isEmpty ? "arrow.down.circle" : "arrow.down")
+                .font(.system(size: pool.activeDownloads.isEmpty ? 15 : 10, weight: .semibold))
+                .overlay {
+                    if !pool.activeDownloads.isEmpty { ProgressRing(fraction: overallFraction).frame(width: 17, height: 17) }
+                }
         }
+        .help("Downloads")
+        .popover(isPresented: $showsList, arrowEdge: .top) { DownloadsPopover() }
+        .onChange(of: pool.downloadStartCount) { showsList = true }
     }
 
     /// Bytes received over bytes expected, across downloads whose size is known.
@@ -59,19 +56,25 @@ struct DownloadsPopover: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Downloads").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 .padding(.horizontal, 8).padding(.bottom, 4)
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(pool.downloads) { download in DownloadRow(download: download) }
+            if pool.downloads.isEmpty {
+                Text("No downloads yet").font(.system(size: 13)).foregroundStyle(.secondary)
+                    .padding(8)
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(pool.downloads) { download in DownloadRow(download: download) }
+                    }
                 }
+                .frame(maxHeight: 360)
+                .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxHeight: 360)
-            .fixedSize(horizontal: false, vertical: true)
             Divider().padding(.vertical, 4)
             HStack {
                 Button("Show in Finder") { NSWorkspace.shared.open(PagePool.downloadsFolder) }
                 Spacer()
                 Button("Clear") { pool.clearFinishedDownloads() }
                     .disabled(pool.downloads.allSatisfy { $0.state == .inProgress })
+                    .opacity(pool.downloads.isEmpty ? 0 : 1)
             }
             .buttonStyle(.borderless)
             .font(.system(size: 12))
