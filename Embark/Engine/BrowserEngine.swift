@@ -87,6 +87,8 @@ protocol BrowserPage: AnyObject {
     var zoomFactor: Double { get set }
     func print()
     func showDevTools()
+    /// Puts a saved login into the page's sign-in form.
+    func fillLogin(username: String, password: String)
 }
 
 extension BrowserPage {
@@ -107,6 +109,7 @@ extension BrowserPage {
     }
     func print() {}
     func showDevTools() {}
+    func fillLogin(username: String, password: String) {}
 }
 
 @MainActor
@@ -126,6 +129,8 @@ protocol BrowserPageDelegate: AnyObject {
     func page(_ page: BrowserPage, hitCertificateError warning: CertificateWarning)
     /// The page's renderer died, from a crash or from running out of memory.
     func page(_ page: BrowserPage, didCrashOutOfMemory outOfMemory: Bool)
+    /// A message from the page's sign-in script (see LoginScript), as JSON.
+    func page(_ page: BrowserPage, didPostLoginMessage message: String)
 }
 
 /// A site's sign-in prompt (HTTP authentication), answered once through `respond`.

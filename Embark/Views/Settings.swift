@@ -11,6 +11,8 @@ struct SettingsView: View {
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
             ProfilesSettings()
                 .tabItem { Label("Profiles", systemImage: "person.crop.circle") }
+            PasswordsSettings()
+                .tabItem { Label("Passwords", systemImage: "key") }
             PrivacySettings()
                 .tabItem { Label("Privacy", systemImage: "hand.raised") }
             ShortcutsSettings()

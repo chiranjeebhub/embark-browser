@@ -261,6 +261,18 @@ struct BrowserWindow: View {
                 }
             }
             .animation(.snappy(duration: 0.2), value: pool.credentialRequests[tab.id]?.id)
+            .overlay(alignment: .top) {
+                if let login = pool.pendingLogins[tab.id] {
+                    SavePasswordCard(tabID: tab.id, login: login)
+                        .padding(.top, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                } else if pool.loginForms.contains(tab.id), case let logins = pool.savedLogins(for: tab.id), !logins.isEmpty {
+                    FillPasswordCard(tabID: tab.id, logins: logins)
+                        .padding(.top, 14)
+                        .id(tab.id)
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: pool.pendingLogins[tab.id])
             .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
             .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
             .animation(.snappy(duration: 0.2), value: pageDropZone)

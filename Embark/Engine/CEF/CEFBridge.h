@@ -63,6 +63,9 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
                description:(NSString *)description
                    respond:(void (^)(BOOL proceed))respond
     NS_SWIFT_NAME(cefBrowser(_:certificateErrorFor:description:respond:));
+/// A console line from the sign-in script (it starts with `loginMessagePrefix`), without the prefix.
+- (void)cefBrowser:(EMBCEFBrowser *)browser didPostLoginMessage:(NSString *)message
+    NS_SWIFT_NAME(cefBrowser(_:didPostLoginMessage:));
 /// The page's renderer process ended, from a crash or from running out of memory.
 - (void)cefBrowser:(EMBCEFBrowser *)browser renderProcessTerminatedOutOfMemory:(BOOL)outOfMemory
     NS_SWIFT_NAME(cefBrowser(_:renderProcessTerminatedOutOfMemory:));
@@ -152,6 +155,12 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 @property (nonatomic) double zoomFactor;
 - (void)print;
 - (void)showDevTools;
+/// Runs in the main frame of every page this browser loads, once it has loaded.
+@property (nonatomic, copy, nullable) NSString *documentScript;
+/// Console lines starting with this go to `cefBrowser:didPostLoginMessage:` and aren't logged.
+@property (nonatomic, copy, nullable) NSString *loginMessagePrefix;
+/// Runs JavaScript in the main frame of the current page.
+- (void)runScript:(NSString *)script;
 
 /// The visible page came over a secure connection with a valid certificate.
 @property (nonatomic, readonly) BOOL isSecure;
