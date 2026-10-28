@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 import SwiftUI
-import Translation
+@preconcurrency import Translation
 
 /// Reader mode and translation for each tab's page. Pages are probed once they load, so the
 /// address bar can offer reader mode for articles and translation for pages in another language.
@@ -232,11 +232,13 @@ final class PageTools {
 /// batch, then keeps an eye out for text the page adds (more results, comments, a new view in
 /// a web app) until the job ends.
 enum TranslationRunner {
-    nonisolated static func run(_ job: PageTools.Job, session: TranslationSession, tools: PageTools) async {
+    /// On the main actor, where `translationTask` hands the session out: the session isn't
+    /// Sendable, so it stays where it was given.
+    @MainActor static func run(_ job: PageTools.Job, session: TranslationSession, tools: PageTools) async {
         do {
             try await session.prepareTranslation()
         } catch {
-            await tools.translationFailed(job, message: message(for: error))
+            tools.translationFailed(job, message: message(for: error))
             return
         }
         while !Task.isCancelled {
@@ -254,8 +256,8 @@ enum TranslationRunner {
                 }
                 await tools.apply(translated, for: job)
             } catch {
-                guard !Task.isCancelled, await tools.isRunning(job) else { return }
-                await tools.translationFailed(job, message: message(for: error))
+                guard !Task.isCancelled, tools.isRunning(job) else { return }
+                tools.translationFailed(job, message: message(for: error))
                 return
             }
         }

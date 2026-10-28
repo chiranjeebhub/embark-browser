@@ -1,5 +1,5 @@
 import SwiftUI
-import Translation
+@preconcurrency import Translation
 
 /// Reader and Translate buttons in the address bar. They show up only when the page offers
 /// them: an article for reader mode, a page in another language for translation.
