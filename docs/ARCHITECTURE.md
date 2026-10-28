@@ -40,6 +40,7 @@ Building it:
 
 ```sh
 scripts/fetch-cef.sh          # downloads stable CEF into Vendor/cef, builds libcef_dll_wrapper
+                              # or scripts/build-cef.sh: builds CEF with H.264 (hours, see CODECS.md)
 xcodegen generate
 xcodebuild -scheme EmbarkChromium build   # or pick the EmbarkChromium scheme in Xcode
 ```

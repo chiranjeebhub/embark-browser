@@ -28,7 +28,8 @@ open Embark.xcodeproj
 
 That builds the `Embark` scheme, which uses WebKit and needs no downloads. To build with
 Chromium, run `scripts/fetch-cef.sh` first, then build the `EmbarkChromium` scheme. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#chromium-via-cef).
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#chromium-via-cef). The prebuilt CEF can't play
+H.264/MP4 video; `scripts/build-cef.sh` builds Chromium with it, see [docs/CODECS.md](docs/CODECS.md).
 
 ### Running the Chromium build day to day
 
