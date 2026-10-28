@@ -78,4 +78,29 @@ struct HistoryTests {
         #expect(groups[0].entries.map(\.title) == ["C", "B"])
         #expect(groups[1].entries.map(\.title) == ["A"])
     }
+
+    @Test func recentSitesShowEachSiteOnceNewestFirst() {
+        var history = History()
+        history.recordVisit(to: url("https://www.a.com/1"), title: "A1", profileID: work)
+        history.recordVisit(to: url("https://b.com"), title: "B", profileID: work)
+        history.recordVisit(to: url("https://c.com"), title: "C", profileID: home)
+        history.recordVisit(to: url("https://a.com/2"), title: "A2", profileID: work)
+        history.recordVisit(to: url("https://d.com"), title: "D", profileID: work)
+        let recent = history.recentSites(profileID: work, excluding: ["d.com"])
+        #expect(recent.map(\.title) == ["A2", "B"])
+        #expect(history.recentSites(profileID: work, limit: 1).map(\.title) == ["D"])
+    }
+
+    @Test func topSitesAddUpVisitsPerSite() {
+        var history = History()
+        let now = Date.now
+        for _ in 0..<3 { history.recordVisit(to: url("https://a.com/x"), title: "AX", profileID: work, at: now) }
+        history.recordVisit(to: url("https://a.com/y"), title: "AY", profileID: work, at: now)
+        for _ in 0..<3 { history.recordVisit(to: url("https://b.com"), title: "B", profileID: work, at: now) }
+        // Visited often, but long ago.
+        for _ in 0..<5 { history.recordVisit(to: url("https://old.com"), title: "Old", profileID: work, at: now.addingTimeInterval(-86_400 * 200)) }
+        let top = history.topSites(profileID: work, now: now)
+        #expect(top.map(\.title) == ["AX", "B", "Old"])
+        #expect(history.topSites(profileID: work, excluding: ["a.com"], now: now).first?.title == "B")
+    }
 }

@@ -17,6 +17,8 @@ final class BrowserStore {
     }
     var selectedSpaceID: Space.ID? { didSet { library.lastSelectedSpaceID = selectedSpaceID } }
     var isCommandBarOpen = false
+    /// Text typed on the new tab page, which opens the command bar with it already in the field.
+    var commandBarSeed = ""
     /// The sidebar drag in progress; see DragSession.
     var dragSession = DragSession()
 
