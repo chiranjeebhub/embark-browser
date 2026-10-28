@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Where the sidebar's address pill is, so the address editor can open right over it.
-struct AddressPillBoundsKey: PreferenceKey {
+struct AddressPillBoundsKey: SwiftUI.PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
 
     /// During a space swipe both spaces' pills report; the selected space's comes first.
