@@ -18,6 +18,8 @@ struct Sidebar: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
             .transition(.opacity.combined(with: .move(edge: .bottom)))
+            MiniPlayer()
+                .padding(.bottom, 8)
             BottomBar()
         }
         // Same side margin as the traffic lights' left inset.
@@ -446,6 +448,13 @@ private struct FavoritesGrid: View {
             if isSelected {
                 RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.7), lineWidth: 1.5)
                     .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if let id = favorite.tab?.id, TabSpeakerButton.shows(id, in: pool) {
+                TabSpeakerButton(tabID: id, size: 8)
+                    .glassEffect(.regular, in: .circle)
+                    .offset(x: 4, y: -4)
             }
         }
         .help(favorite.tab?.title ?? favorite.title)
@@ -1039,6 +1048,7 @@ private struct TabRow: View {
             FaviconView(url: tab.url, size: 16)
             Text(tab.title).lineLimit(1).fontWeight(isSelected ? .semibold : .regular)
             Spacer(minLength: 0)
+            if TabSpeakerButton.shows(tab.id, in: pool) { TabSpeakerButton(tabID: tab.id) }
             if hovering && tab.isUnloaded != true {
                 Button { pool.close(tab.id); store.closeTab(tab.id) } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
@@ -1093,10 +1103,14 @@ private struct TabRow: View {
                 Button("Remove from Folder") { store.moveTabs([tab.id], toFolder: nil) }
             }
             Button("Add to Favorites") { store.addFavorite(from: tab) }
+            if pool.media[tab.id] != nil || pool.mutedTabs.contains(tab.id) {
+                Button(pool.mutedTabs.contains(tab.id) ? "Unmute Tab" : "Mute Tab") { pool.toggleMuted(tab.id) }
+            }
             Divider()
             Button("Close Tab") { pool.close(tab.id); store.closeTab(tab.id) }
         }
         .animation(.smooth(duration: 0.25), value: isSelected)
+        .animation(.snappy(duration: 0.2), value: TabSpeakerButton.shows(tab.id, in: pool))
     }
 
     /// Every folder in the space, depth first, for the Add to Folder menu.
@@ -1127,6 +1141,7 @@ private struct SplitRow: View {
                 HStack(spacing: 6) {
                     FaviconView(url: tab.url, size: 14)
                     Text(tab.title).lineLimit(1).fontWeight(isSelected ? .semibold : .regular)
+                    if TabSpeakerButton.shows(tab.id, in: pool) { TabSpeakerButton(tabID: tab.id, size: 9) }
                 }
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)

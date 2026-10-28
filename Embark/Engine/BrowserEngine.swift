@@ -72,6 +72,8 @@ protocol BrowserPage: AnyObject {
     func defaultPermission(_ permission: SitePermission) -> PermissionValue
     func setPermission(_ permission: SitePermission, to value: PermissionValue)
     func setAudioMuted(_ muted: Bool)
+    /// Mutes the tab from its speaker button, across the pages it loads.
+    func setTabMuted(_ muted: Bool)
     func countCookies(_ completion: @escaping (Int) -> Void)
     /// Deletes the site's cookies and storage.
     func clearSiteData(_ completion: @escaping () -> Void)
@@ -89,6 +91,8 @@ protocol BrowserPage: AnyObject {
     func showDevTools()
     /// Puts a saved login into the page's sign-in form.
     func fillLogin(username: String, password: String)
+    /// Plays, pauses, skips or mutes what the page is playing (see MediaScript).
+    func controlMedia(_ command: MediaCommand)
 }
 
 extension BrowserPage {
@@ -97,6 +101,7 @@ extension BrowserPage {
     func defaultPermission(_ permission: SitePermission) -> PermissionValue { .default }
     func setPermission(_ permission: SitePermission, to value: PermissionValue) {}
     func setAudioMuted(_ muted: Bool) {}
+    func setTabMuted(_ muted: Bool) { setAudioMuted(muted) }
     func countCookies(_ completion: @escaping (Int) -> Void) { completion(0) }
     func clearSiteData(_ completion: @escaping () -> Void) { completion() }
     func find(_ text: String, forward: Bool, findNext: Bool) {}
@@ -110,6 +115,7 @@ extension BrowserPage {
     func print() {}
     func showDevTools() {}
     func fillLogin(username: String, password: String) {}
+    func controlMedia(_ command: MediaCommand) {}
 }
 
 @MainActor
@@ -131,6 +137,8 @@ protocol BrowserPageDelegate: AnyObject {
     func page(_ page: BrowserPage, didCrashOutOfMemory outOfMemory: Bool)
     /// A message from the page's sign-in script (see LoginScript), as JSON.
     func page(_ page: BrowserPage, didPostLoginMessage message: String)
+    /// A message from the page's media script (see MediaScript), as JSON.
+    func page(_ page: BrowserPage, didPostMediaMessage message: String)
 }
 
 /// A site's sign-in prompt (HTTP authentication), answered once through `respond`.

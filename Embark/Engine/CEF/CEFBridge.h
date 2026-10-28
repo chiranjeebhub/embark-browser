@@ -66,6 +66,9 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
 /// A console line from the sign-in script (it starts with `loginMessagePrefix`), without the prefix.
 - (void)cefBrowser:(EMBCEFBrowser *)browser didPostLoginMessage:(NSString *)message
     NS_SWIFT_NAME(cefBrowser(_:didPostLoginMessage:));
+/// A console line from the media script (it starts with `mediaMessagePrefix`), without the prefix.
+- (void)cefBrowser:(EMBCEFBrowser *)browser didPostMediaMessage:(NSString *)message
+    NS_SWIFT_NAME(cefBrowser(_:didPostMediaMessage:));
 /// The page's renderer process ended, from a crash or from running out of memory.
 - (void)cefBrowser:(EMBCEFBrowser *)browser renderProcessTerminatedOutOfMemory:(BOOL)outOfMemory
     NS_SWIFT_NAME(cefBrowser(_:renderProcessTerminatedOutOfMemory:));
@@ -159,6 +162,8 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 @property (nonatomic, copy, nullable) NSString *documentScript;
 /// Console lines starting with this go to `cefBrowser:didPostLoginMessage:` and aren't logged.
 @property (nonatomic, copy, nullable) NSString *loginMessagePrefix;
+/// Console lines starting with this go to `cefBrowser:didPostMediaMessage:` and aren't logged.
+@property (nonatomic, copy, nullable) NSString *mediaMessagePrefix;
 /// Runs JavaScript in the main frame of the current page.
 - (void)runScript:(NSString *)script;
 
@@ -172,6 +177,8 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 - (EMBPermissionValue)defaultPermission:(EMBSitePermission)permission;
 - (void)setPermission:(EMBSitePermission)permission value:(EMBPermissionValue)value;
 - (void)setAudioMuted:(BOOL)muted;
+/// Muted from the tab's speaker button. It stays across pages, on top of the site's sound setting.
+@property (nonatomic) BOOL tabAudioMuted;
 /// Cookies sent to the current page.
 - (void)countCookies:(void (^)(NSInteger count))completion;
 /// Deletes the site's cookies (its whole registrable domain) and the origin's storage.

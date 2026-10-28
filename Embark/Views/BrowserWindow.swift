@@ -55,6 +55,12 @@ struct BrowserWindow: View {
                         CommandBar().transition(.opacity.combined(with: .scale(scale: 0.98)))
                     }
                 }
+                // With the sidebar hidden, the mini player floats over the page's corner.
+                .overlay(alignment: onRight ? .bottomTrailing : .bottomLeading) {
+                    if !showsSidebar && !isPageFullscreen {
+                        MiniPlayer().frame(width: 244).padding(12)
+                    }
+                }
                 .clipShape(.rect(cornerRadius: isPageFullscreen ? 0 : 12))
                 .shadow(color: .black.opacity(isPageFullscreen ? 0 : 0.12), radius: 12, y: 4)
                 // With the sidebar on the right, the traffic lights get a strip above the page.
@@ -76,6 +82,7 @@ struct BrowserWindow: View {
             pool.exitFullscreen()
         }
         .onChange(of: store.selectedTab?.id) { if pool.findTabID != nil { pool.closeFind() } }
+        .onChange(of: visibleTabIDs) { old, new in pool.tabsLeftScreen(old.subtracting(new)) }
         .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false }
         // While peeking, the card draws its own traffic lights (see CardTrafficLights). With the
         // sidebar on the right they stay above the page.
@@ -286,7 +293,7 @@ struct BrowserWindow: View {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(60))
             pool.sleepIdle(spaces: store.spaces, visible: visibleTabIDs, idle: 30 * 60)
-            for id in store.archiveIdleTabs(keeping: visibleTabIDs) { pool.close(id) }
+            for id in store.archiveIdleTabs(keeping: visibleTabIDs.union(pool.playingTabs)) { pool.close(id) }
         }
     }
 }

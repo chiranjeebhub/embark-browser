@@ -71,6 +71,15 @@ final class PagePool: BrowserPageDelegate {
     /// The tab showing a video (or other element) full screen.
     private(set) var fullscreenTabID: BrowserTab.ID?
 
+    /// What each tab's page plays, while something is playing or paused part way.
+    private(set) var media: [BrowserTab.ID: MediaState] = [:]
+    /// Tabs muted from their speaker button. They stay muted when their page reloads.
+    private(set) var mutedTabs: Set<BrowserTab.ID> = []
+    /// Tabs the mini player leaves alone until they play again: closed from it, or paused
+    /// when they left the screen.
+    private(set) var quietMedia: Set<BrowserTab.ID> = []
+    @ObservationIgnored private var mediaStartedAt: [BrowserTab.ID: Date] = [:]
+
     /// Downloads this session, newest first.
     private(set) var downloads: [Download] = []
     /// Bumped when a download starts, so the sidebar can show the list.
@@ -97,6 +106,7 @@ final class PagePool: BrowserPageDelegate {
         profilesByTab[tab.id] = profile
         if usesMediaEngine { mediaPages.insert(tab.id) }
         if profile.isPrivate == true { privatePages.insert(tab.id) }
+        if mutedTabs.contains(tab.id) { page.setTabMuted(true) }
         return page
     }
 
@@ -247,6 +257,9 @@ final class PagePool: BrowserPageDelegate {
         liveURLs[id] = nil
         loadingProgress[id] = nil
         zoomedHosts[id] = nil
+        media[id] = nil
+        quietMedia.remove(id)
+        mediaStartedAt[id] = nil
         privatePages.remove(id)
         credentialRequests.removeValue(forKey: id)?.respond(nil, nil)
         certificateWarnings.removeValue(forKey: id)?.respond(false)
@@ -255,10 +268,12 @@ final class PagePool: BrowserPageDelegate {
         page.close()
     }
 
-    /// Closes pages for tabs untouched for `idle` seconds, except the visible ones.
+    /// Closes pages for tabs untouched for `idle` seconds, except the visible ones and the
+    /// ones playing something.
     func sleepIdle(spaces: [Space], visible: Set<BrowserTab.ID>, idle: TimeInterval) {
         let cutoff = Date.now.addingTimeInterval(-idle)
-        for tab in spaces.flatMap(\.tabs) where tab.lastActive < cutoff && !visible.contains(tab.id) {
+        let keep = visible.union(playingTabs)
+        for tab in spaces.flatMap(\.tabs) where tab.lastActive < cutoff && !keep.contains(tab.id) {
             close(tab.id)
         }
     }
@@ -326,7 +341,9 @@ final class PagePool: BrowserPageDelegate {
         pages[id] = page
         tabIDs[ObjectIdentifier(page)] = id
         mediaPages.insert(id)
+        if mutedTabs.contains(id) { page.setTabMuted(true) }
         loadingProgress[id] = nil
+        media[id] = nil
         engineSwitches += 1
     }
 
@@ -337,7 +354,58 @@ final class PagePool: BrowserPageDelegate {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
         crashedTabs[id] = outOfMemory
         loadingProgress[id] = nil
+        media[id] = nil
         if fullscreenTabID == id { fullscreenTabID = nil }
+    }
+
+    // MARK: Media
+
+    func page(_ page: BrowserPage, didPostMediaMessage message: String) {
+        guard let id = tabIDs[ObjectIdentifier(page)], let message = MediaMessage.parse(message) else { return }
+        switch message {
+        case .idle:
+            if media[id] != nil { media[id] = nil }
+        case .media(let state):
+            if state.isPlaying, media[id]?.isPlaying != true {
+                mediaStartedAt[id] = .now
+                if quietMedia.contains(id) { quietMedia.remove(id) }
+            }
+            if media[id] != state { media[id] = state }
+        }
+    }
+
+    /// Tabs with sound playing, which never go to sleep or to the archive.
+    var playingTabs: Set<BrowserTab.ID> { Set(media.filter { $0.value.isPlaying }.keys) }
+
+    func toggleMuted(_ id: BrowserTab.ID) {
+        let muted = !mutedTabs.contains(id)
+        if muted { mutedTabs.insert(id) } else { mutedTabs.remove(id) }
+        pages[id]?.setTabMuted(muted)
+    }
+
+    func controlMedia(_ id: BrowserTab.ID, _ command: MediaCommand) {
+        pages[id]?.controlMedia(command)
+    }
+
+    /// Closing the mini player pauses its tab.
+    func dismissMiniPlayer(_ id: BrowserTab.ID) {
+        pages[id]?.controlMedia(.pause)
+        quietMedia.insert(id)
+    }
+
+    /// Media paused before its tab left the screen gets no mini player, as in Arc.
+    func tabsLeftScreen(_ ids: Set<BrowserTab.ID>) {
+        for id in ids where media[id]?.isPlaying == false && !quietMedia.contains(id) { quietMedia.insert(id) }
+    }
+
+    /// The tab the mini player shows, from `candidates` (the tabs off screen): playing before
+    /// paused, then the one that started last.
+    func miniPlayerTab(among candidates: Set<BrowserTab.ID>) -> BrowserTab.ID? {
+        media.filter { candidates.contains($0.key) && !quietMedia.contains($0.key) }
+            .max { a, b in
+                (a.value.isPlaying ? 1 : 0, mediaStartedAt[a.key] ?? .distantPast)
+                    < (b.value.isPlaying ? 1 : 0, mediaStartedAt[b.key] ?? .distantPast)
+            }?.key
     }
 
     // MARK: Passwords

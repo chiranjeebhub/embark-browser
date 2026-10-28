@@ -70,6 +70,9 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
             config.userContentController.addUserScript(WKUserScript(source: Self.loginScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
             config.userContentController.add(relay, name: "embarkLogin")
         }
+        // Reports what the page plays, for the tab's speaker and the mini player.
+        config.userContentController.addUserScript(WKUserScript(source: Self.mediaScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        config.userContentController.add(relay, name: "embarkMedia")
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
         relay.page = self
@@ -102,6 +105,7 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
 
     func close() {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "embarkLogin")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "embarkMedia")
         observations.removeAll()
         webView.stopLoading()
         webView.removeFromSuperview()
@@ -115,6 +119,28 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
 
     func fillLogin(username: String, password: String) {
         webView.evaluateJavaScript(LoginScript.fillCall(username: username, password: password))
+    }
+
+    private static let mediaScript = MediaScript.source(for: .webKit)
+    /// WebKit has no public switch to mute a page, so the media script mutes its elements,
+    /// again on every page the tab loads.
+    private var isAudioMuted = false
+
+    fileprivate func receivedMediaMessage(_ message: String) {
+        delegate?.page(self, didPostMediaMessage: message)
+    }
+
+    func controlMedia(_ command: MediaCommand) {
+        webView.evaluateJavaScript(MediaScript.call(command))
+    }
+
+    func setAudioMuted(_ muted: Bool) {
+        isAudioMuted = muted
+        controlMedia(muted ? .mute : .unmute)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if isAudioMuted { controlMedia(.mute) }
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -137,7 +163,7 @@ final class WebKitPage: NSObject, BrowserPage, WKNavigationDelegate, WKUIDelegat
     }
 }
 
-/// Hands the sign-in script's messages to the page without the content controller keeping the
+/// Hands the sign-in and media scripts' messages to the page without the content controller keeping the
 /// page alive.
 @MainActor
 private final class LoginMessageRelay: NSObject, WKScriptMessageHandler {
@@ -145,6 +171,9 @@ private final class LoginMessageRelay: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let body = message.body as? String else { return }
-        MainActor.assumeIsolated { page?.receivedLoginMessage(body) }
+        let isMedia = message.name == "embarkMedia"
+        MainActor.assumeIsolated {
+            if isMedia { page?.receivedMediaMessage(body) } else { page?.receivedLoginMessage(body) }
+        }
     }
 }
