@@ -247,7 +247,8 @@ enum TranslationRunner {
                 try? await Task.sleep(for: .seconds(1.5))
                 continue
             }
-            let requests = items.map { TranslationSession.Request(sourceText: $0.text, clientIdentifier: String($0.id)) }
+            // Built here and only handed to the session, never touched again.
+            nonisolated(unsafe) let requests = items.map { TranslationSession.Request(sourceText: $0.text, clientIdentifier: String($0.id)) }
             do {
                 let responses = try await session.translations(from: requests)
                 var translated: [Int: String] = [:]
