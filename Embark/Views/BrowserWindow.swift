@@ -266,7 +266,7 @@ struct BrowserWindow: View {
             .animation(.snappy(duration: 0.2), value: pageDropZone)
             .onChange(of: store.dragSession.changes) { pageDropZone = nil }
         } else {
-            EmptySpaceView()
+            NewTabPage()
         }
     }
 
@@ -500,20 +500,5 @@ private struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { if window !== view.window { window = view.window } }
-    }
-}
-
-struct EmptySpaceView: View {
-    @Environment(BrowserStore.self) private var store
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "sailboat").font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)
-            Text("Nothing open in this space").font(.title3.weight(.semibold))
-            Button("Open something  ⌘T") { store.isCommandBarOpen = true }
-                .buttonStyle(.glassProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
     }
 }

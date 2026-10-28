@@ -88,6 +88,43 @@ struct History: Codable {
         return Array(matches.map { ($0, score($0)) }.sorted { $0.1 > $1.1 }.prefix(limit).map(\.0))
     }
 
+    /// The site a page belongs to, for telling sites apart: its host without "www.".
+    static func site(of url: URL) -> String {
+        let host = (url.host() ?? url.absoluteString).lowercased()
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    /// The new tab page's "Jump back in": the latest page of each site visited in a profile,
+    /// newest first, leaving out sites it already shows (favorites, open tabs).
+    func recentSites(profileID: Profile.ID, excluding sites: Set<String> = [], limit: Int = 6) -> [HistoryEntry] {
+        var seen = sites
+        var out: [HistoryEntry] = []
+        // Entries are newest first, so this stops as soon as it has enough.
+        for entry in entries where entry.profileID == profileID && out.count < limit {
+            if seen.insert(Self.site(of: entry.url)).inserted { out.append(entry) }
+        }
+        return out
+    }
+
+    /// The new tab page's most visited sites, when a space has no favorites: each site's
+    /// visits, counting recent ones more, best first. Shows the site's most visited page.
+    func topSites(profileID: Profile.ID, excluding sites: Set<String> = [], limit: Int = 8, now: Date = .now) -> [HistoryEntry] {
+        var scores: [String: (entry: HistoryEntry, score: Double)] = [:]
+        for entry in entries where entry.profileID == profileID {
+            let site = Self.site(of: entry.url)
+            guard !sites.contains(site) else { continue }
+            let days = max(0, now.timeIntervalSince(entry.lastVisited) / 86_400)
+            let score = Double(entry.visitCount) / (1 + days / 14)
+            if let best = scores[site] {
+                let keepsBest = best.entry.visitCount >= entry.visitCount
+                scores[site] = (keepsBest ? best.entry : entry, best.score + score)
+            } else {
+                scores[site] = (entry, score)
+            }
+        }
+        return scores.values.sorted { $0.score > $1.score }.prefix(limit).map(\.entry)
+    }
+
     /// Entries grouped by the day they were last visited, newest day first.
     static func byDay(_ entries: [HistoryEntry], calendar: Calendar = .current) -> [(day: Date, entries: [HistoryEntry])] {
         var groups: [(day: Date, entries: [HistoryEntry])] = []

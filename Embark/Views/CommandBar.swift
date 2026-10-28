@@ -88,6 +88,11 @@ struct CommandBar: View {
             }
         }
         .onAppear {
+            if !store.commandBarSeed.isEmpty {
+                query = store.commandBarSeed
+                store.commandBarSeed = ""
+                Self.moveCaretToEnd()
+            }
             focused = true
             results = matchingResults()
         }
@@ -208,6 +213,17 @@ struct CommandBar: View {
         guard !Task.isCancelled else { return }
         suggestions = fetched
         suggestionsQuery = q
+    }
+
+    /// A field that takes focus selects all its text, so the next key typed would replace
+    /// what the new tab page passed on. Puts the caret after it once the field has focus.
+    private static func moveCaretToEnd() {
+        DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+                editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+            }
+        }
     }
 
     private func close() {
