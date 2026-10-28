@@ -1137,22 +1137,15 @@ private struct SplitRow: View {
     }
 }
 
-/// Library and downloads on the left, one glyph per space in the middle, and the + menu on the right.
+/// Downloads on the left, one glyph per space in the middle, and the + menu on the right.
+/// Recently closed tabs live in the File menu and on the new tab page.
 private struct BottomBar: View {
     @Environment(BrowserStore.self) private var store
-    @Environment(PagePool.self) private var pool
-    @State private var showsLibrary = false
     @State private var showsNewMenu = false
 
     var body: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Button { showsLibrary = true } label: { Image(systemName: "archivebox") }
-                    .help("Library")
-                    .popover(isPresented: $showsLibrary, arrowEdge: .top) { LibraryPopover(isPresented: $showsLibrary) }
-                DownloadsButton()
-            }
-            .animation(.snappy(duration: 0.2), value: pool.downloads.isEmpty)
+            DownloadsButton()
             Spacer(minLength: 8)
             HStack(spacing: 8) {
                 // The active marker moves across during a swipe.
@@ -1232,32 +1225,6 @@ private struct SpaceGlyph: View {
 
     private var glyph: some View {
         SpaceIconView(icon: space.icon, name: space.name, size: 15)
-    }
-}
-
-/// Recently closed tabs of the current space; clicking one reopens it.
-private struct LibraryPopover: View {
-    @Binding var isPresented: Bool
-    @Environment(BrowserStore.self) private var store
-
-    var body: some View {
-        let closed = (store.selectedSpace?.recentlyClosed ?? []).reversed()
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Recently Closed").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                .padding(.horizontal, 8).padding(.bottom, 4)
-            if closed.isEmpty {
-                Text("No recently closed tabs").font(.system(size: 13)).foregroundStyle(.secondary)
-                    .padding(8)
-            }
-            ForEach(Array(closed)) { tab in
-                MenuRow(icon: nil, favicon: tab.url, title: tab.title) {
-                    store.reopenClosedTab(tab.id)
-                    isPresented = false
-                }
-            }
-        }
-        .padding(8)
-        .frame(width: 260)
     }
 }
 

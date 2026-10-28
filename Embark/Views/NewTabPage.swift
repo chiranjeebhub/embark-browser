@@ -47,7 +47,23 @@ struct NewTabPage: View {
             .scrollIndicators(.never)
             .scrollBounceBehavior(.basedOnSize)
         }
-        .background { NewTabBackground(theme: theme) }
+        .background {
+            let wallpaper = space?.resolvedWallpaper ?? .default
+            ZStack {
+                if wallpaper == .none {
+                    NewTabBackground(theme: theme)
+                } else {
+                    WallpaperView(wallpaper: wallpaper, theme: theme, seed: space?.id ?? Self.fallbackSeed)
+                    WallpaperVeil(theme: theme)
+                }
+            }
+            .id(wallpaper)
+            .transition(.opacity)
+            .animation(.smooth(duration: 0.4), value: wallpaper)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let space { wallpaperMenu(space) }
+        }
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
@@ -171,6 +187,37 @@ struct NewTabPage: View {
         }
     }
 
+    // MARK: Wallpaper
+
+    /// Seeds the wallpaper while no space is selected.
+    private static let fallbackSeed = UUID(uuidString: "6A3F0C55-2B1E-4D8A-9C47-1E5B7F2D9A10")!
+
+    private func wallpaperMenu(_ space: Space) -> some View {
+        let selection = Binding<Wallpaper>(
+            get: { space.resolvedWallpaper },
+            set: { wallpaper in store.updateSpace(space.id) { $0.wallpaper = wallpaper } }
+        )
+        return Menu {
+            Picker("Background", selection: selection) {
+                ForEach(Wallpaper.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "paintbrush.pointed")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 34, height: 34)
+                .contentShape(.circle)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .glassEffect(.regular.interactive(), in: .circle)
+        .help("Change this space's background")
+        .padding(16)
+    }
+
     // MARK: Suggestions
 
     private enum Suggestions {
@@ -223,6 +270,20 @@ private struct NewTabBackground: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// Over a wallpaper: the page's middle fades a little toward the background, so the clock and
+/// the cards over it read on any colors.
+private struct WallpaperVeil: View {
+    let theme: SpaceTheme
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let background = WallpaperPalette(theme: theme, isDark: colorScheme == .dark).background[0]
+        RadialGradient(colors: [background.color(intensity: theme.intensity).opacity(colorScheme == .dark ? 0.5 : 0.6), .clear],
+                       center: UnitPoint(x: 0.5, y: 0.38), startRadius: 0, endRadius: 560)
+            .allowsHitTesting(false)
     }
 }
 
