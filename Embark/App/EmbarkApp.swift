@@ -27,7 +27,10 @@ struct EmbarkApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
-        .commands { BrowserCommands(fallbackStore: store, pool: pool) }
+        .commands {
+            BrowserCommands(fallbackStore: store, pool: pool)
+            UpdateCommands()
+        }
 
         WindowGroup("Private Window", id: "private") {
             BrowserWindowRoot(isPrivate: true)
@@ -90,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         EMBCEFRuntime.setBlocksThirdPartyCookies(UserDefaults.standard.bool(forKey: PreferenceKey.blocksThirdPartyCookies))
         #endif
+        AppUpdater.shared.start()
     }
 
     /// Another Embark from the same bundle, e.g. launched from a second copy of the app.

@@ -1,0 +1,133 @@
+name: Release
+
+# Builds the Chromium app, signs it, and publishes it as a GitHub release with the Sparkle
+# appcast that installed copies check for updates. Run it by pushing a tag like v0.2.0, or
+# from the Actions tab with a version. One-time setup: docs/RELEASING.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, like 0.2.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  SPARKLE_VERSION: 2.9.6
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The build number counts commits, so it needs the whole history.
+          fetch-depth: 0
+
+      - name: Check setup
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          EMBARK_SIGNING_P12: ${{ secrets.EMBARK_SIGNING_P12 }}
+        run: |
+          missing=0
+          for name in SPARKLE_PRIVATE_KEY EMBARK_SIGNING_P12; do
+            if [ -z "${!name}" ]; then echo "::error title=Missing secret::$name isn't set. Run scripts/setup-updates.sh (docs/RELEASING.md)."; missing=1; fi
+          done
+          if grep -Eq '^ *SPARKLE_PUBLIC_KEY: *""' project.yml; then
+            echo "::error title=No update key::SPARKLE_PUBLIC_KEY in project.yml is empty. Run scripts/setup-updates.sh and commit project.yml."
+            missing=1
+          fi
+          exit $missing
+
+      - name: Version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-$GITHUB_REF_NAME}"
+          VERSION="${VERSION#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error title=Version::'$VERSION' isn't a version like 0.2.0"; exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+
+      - name: Download and build CEF
+        run: |
+          set -o pipefail
+          command -v cmake >/dev/null || brew install cmake
+          scripts/fetch-cef.sh 2>&1 | tail -5
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Embark.xcodeproj \
+            -scheme EmbarkChromium \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/DerivedData \
+            ARCHS=arm64 \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee build.log | tail -40
+          echo "APP=build/DerivedData/Build/Products/Release-chromium/Embark.app" >> "$GITHUB_ENV"
+
+      - name: Sign
+        env:
+          EMBARK_SIGNING_P12: ${{ secrets.EMBARK_SIGNING_P12 }}
+          EMBARK_SIGNING_P12_PASSWORD: ${{ secrets.EMBARK_SIGNING_P12_PASSWORD }}
+        run: scripts/sign-local.sh "$APP"
+
+      - name: Package
+        run: |
+          ZIP="Embark-$VERSION.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Sign update and write appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          TOOLS="$RUNNER_TEMP/sparkle"
+          mkdir -p "$TOOLS"
+          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz" \
+            | tar -xJ -C "$TOOLS" ./bin/sign_update
+          KEY="$RUNNER_TEMP/sparkle-key"
+          (umask 077; printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY")
+          SIGNATURE="$("$TOOLS/bin/sign_update" --ed-key-file "$KEY" "$ZIP")"
+          rm -f "$KEY"
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/$ZIP"
+          scripts/make-appcast.sh "$VERSION" "$BUILD" "$URL" "$SIGNATURE" > appcast.xml
+          cat appcast.xml
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" "$ZIP" appcast.xml \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Embark $VERSION" \
+            --generate-notes
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-build-log
+          path: build.log

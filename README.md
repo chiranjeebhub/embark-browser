@@ -54,6 +54,11 @@ The first run creates an "Embark Local Dev" identity in its own keychain under
 "Always Allow" once after that; later rebuilds signed the same way are remembered. CI
 doesn't sign and isn't affected.
 
+### Releases and updates
+
+Releases are built by GitHub Actions and installed copies update themselves with Sparkle. See
+[docs/RELEASING.md](docs/RELEASING.md) for the one-time setup and how to publish a release.
+
 ### Tests
 
 ```sh
