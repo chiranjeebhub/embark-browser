@@ -216,6 +216,7 @@ private:
 - (void)handleFullscreen:(BOOL)fullscreen;
 - (void)handleRenderProcessTerminatedOutOfMemory:(BOOL)outOfMemory;
 - (void)handleLoginMessage:(NSString *)message;
+- (void)handleMediaMessage:(NSString *)message;
 - (void)handleScriptResult:(NSString *)result;
 @end
 
@@ -585,17 +586,22 @@ public:
     }
 
     bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString &message, const CefString &, int) override {
-        NSString *prefix = owner_.loginMessagePrefix;
-        NSString *resultPrefix = owner_.scriptResultPrefix;
-        if (!prefix.length && !resultPrefix.length) return false;
         NSString *text = @(message.ToString().c_str());
+        NSString *login = owner_.loginMessagePrefix, *media = owner_.mediaMessagePrefix;
+        NSString *resultPrefix = owner_.scriptResultPrefix;
         if (resultPrefix.length && [text hasPrefix:resultPrefix]) {
             [owner_ handleScriptResult:[text substringFromIndex:resultPrefix.length]];
             return true;
         }
-        if (!prefix.length || ![text hasPrefix:prefix]) return false;
-        [owner_ handleLoginMessage:[text substringFromIndex:prefix.length]];
-        return true;
+        if (login.length && [text hasPrefix:login]) {
+            [owner_ handleLoginMessage:[text substringFromIndex:login.length]];
+            return true;
+        }
+        if (media.length && [text hasPrefix:media]) {
+            [owner_ handleMediaMessage:[text substringFromIndex:media.length]];
+            return true;
+        }
+        return false;
     }
 
     void OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus status, int, const CefString &) override {
@@ -830,6 +836,7 @@ private:
 
 - (void)handleCreated:(CefRefPtr<CefBrowser>)browser {
     _browser = browser;
+    if (_tabAudioMuted) _browser->GetHost()->SetAudioMuted(true);
     // CEF adds its own NSView; make it follow our container's size.
     for (NSView *child in _view.subviews) {
         child.frame = _view.bounds;
@@ -888,7 +895,12 @@ private:
 }
 
 - (void)setAudioMuted:(BOOL)muted {
-    if (_browser) _browser->GetHost()->SetAudioMuted(muted);
+    if (_browser) _browser->GetHost()->SetAudioMuted(muted || _tabAudioMuted);
+}
+
+- (void)setTabAudioMuted:(BOOL)muted {
+    _tabAudioMuted = muted;
+    if (_browser) _browser->GetHost()->SetAudioMuted(muted || [self permission:EMBSitePermissionSound] == EMBPermissionValueBlock);
 }
 
 - (void)countCookies:(void (^)(NSInteger))completion {
@@ -957,6 +969,10 @@ private:
 
 - (void)handleLoginMessage:(NSString *)message {
     [self.delegate cefBrowser:self didPostLoginMessage:message];
+}
+
+- (void)handleMediaMessage:(NSString *)message {
+    [self.delegate cefBrowser:self didPostMediaMessage:message];
 }
 
 - (void)handleScriptResult:(NSString *)result {

@@ -7,20 +7,24 @@ final class CEFEngine: BrowserEngine {
     static let cacheRoot = BrowserStore.supportDirectory.appending(path: "Chromium", directoryHint: .isDirectory)
 
     func makePage(url: URL, profile: Profile) -> BrowserPage {
+        let browser: EMBCEFBrowser
         if profile.isPrivate == true {
-            let browser = EMBCEFBrowser(url: url, privateSessionID: profile.id.uuidString)
-            browser.scriptResultPrefix = CEFPage.scriptResultPrefix
-            return CEFPage(browser: browser)
+            browser = EMBCEFBrowser(url: url, privateSessionID: profile.id.uuidString)
+            browser.documentScript = Self.mediaScript
+        } else {
+            browser = EMBCEFBrowser(url: url, profileDirectory: directory(for: profile))
+            // Notices sign-ins, for saved passwords. Private windows save none.
+            browser.documentScript = Self.mediaScript + "\n" + Self.loginScript
+            browser.loginMessagePrefix = LoginScript.consolePrefix
         }
-        let browser = EMBCEFBrowser(url: url, profileDirectory: directory(for: profile))
-        // Notices sign-ins, for saved passwords. Private windows save none.
-        browser.documentScript = Self.loginScript
-        browser.loginMessagePrefix = LoginScript.consolePrefix
+        // Chromium says nothing about sound, so the page reports what it plays.
+        browser.mediaMessagePrefix = MediaScript.consolePrefix
         browser.scriptResultPrefix = CEFPage.scriptResultPrefix
         return CEFPage(browser: browser)
     }
 
     private static let loginScript = LoginScript.source(for: .console)
+    private static let mediaScript = MediaScript.source(for: .console)
 
     var supportsExtensions: Bool { true }
 
@@ -227,6 +231,14 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
         browser.runScript(LoginScript.fillCall(username: username, password: password))
     }
 
+    nonisolated func cefBrowser(_ browser: EMBCEFBrowser, didPostMediaMessage message: String) {
+        MainActor.assumeIsolated { delegate?.page(self, didPostMediaMessage: message) }
+    }
+
+    func controlMedia(_ command: MediaCommand) {
+        browser.runScript(MediaScript.call(command))
+    }
+
     // MARK: Scripts
 
     /// Results of `evaluate` come back as console lines starting with this, then "<id>:<json>".
@@ -292,6 +304,7 @@ final class CEFPage: NSObject, BrowserPage, EMBCEFBrowserDelegate {
     }
 
     func setAudioMuted(_ muted: Bool) { browser.setAudioMuted(muted) }
+    func setTabMuted(_ muted: Bool) { browser.tabAudioMuted = muted }
 
     func countCookies(_ completion: @escaping (Int) -> Void) {
         browser.countCookies { completion($0) }
