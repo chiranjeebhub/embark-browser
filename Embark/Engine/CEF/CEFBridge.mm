@@ -214,6 +214,7 @@ private:
 - (void)handlePermissionDismissed:(uint64_t)requestID;
 - (void)handleFindCount:(int)count active:(int)active;
 - (void)handleFullscreen:(BOOL)fullscreen;
+- (void)handleRenderProcessTerminatedOutOfMemory:(BOOL)outOfMemory;
 @end
 
 namespace {
@@ -576,6 +577,10 @@ public:
         return true;
     }
 
+    void OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus status, int, const CefString &) override {
+        [owner_ handleRenderProcessTerminatedOutOfMemory:status == TS_PROCESS_OOM];
+    }
+
     void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override {
         [owner_ handleFullscreen:fullscreen];
     }
@@ -928,6 +933,10 @@ private:
 }
 
 - (void)handleFullscreen:(BOOL)fullscreen { [self.delegate cefBrowser:self didChangeFullscreen:fullscreen]; }
+
+- (void)handleRenderProcessTerminatedOutOfMemory:(BOOL)outOfMemory {
+    [self.delegate cefBrowser:self renderProcessTerminatedOutOfMemory:outOfMemory];
+}
 
 - (void)handleNavigationStateBack:(BOOL)back forward:(BOOL)forward {
     _canGoBack = back;

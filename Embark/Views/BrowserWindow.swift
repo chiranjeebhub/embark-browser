@@ -281,12 +281,30 @@ struct BrowserWindow: View {
 
 /// Hosts the engine's view for one tab. The page itself lives in the PagePool, so it survives
 /// switching tabs and spaces.
-struct PageHost: NSViewRepresentable {
+struct PageHost: View {
     let tab: BrowserTab
     let profile: Profile
     /// Called when the user clicks into the page. Web views swallow clicks, so this watches
     /// the window's mouse-downs instead.
     var onClick: (() -> Void)?
+    @Environment(PagePool.self) private var pool
+
+    var body: some View {
+        PageContainer(tab: tab, profile: profile, onClick: onClick, engineSwitches: pool.engineSwitches)
+            .overlay {
+                if let outOfMemory = pool.crashedTabs[tab.id] {
+                    CrashedPageView(tabID: tab.id, outOfMemory: outOfMemory)
+                }
+            }
+    }
+}
+
+private struct PageContainer: NSViewRepresentable {
+    let tab: BrowserTab
+    let profile: Profile
+    var onClick: (() -> Void)?
+    /// Changes when a page moves to another engine, so the new page's view is put in.
+    let engineSwitches: Int
     @Environment(PagePool.self) private var pool
     @Environment(BrowserStore.self) private var store
 

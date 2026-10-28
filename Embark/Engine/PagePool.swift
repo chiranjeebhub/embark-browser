@@ -7,6 +7,15 @@ import Observation
 @Observable
 final class PagePool: BrowserPageDelegate {
     @ObservationIgnored private let engine: BrowserEngine
+    /// macOS's WebKit, for streaming sites the main engine can't play (see ProtectedMedia).
+    /// nil when the main engine is WebKit already.
+    @ObservationIgnored private let mediaEngine: BrowserEngine?
+    /// Tabs whose page runs on `mediaEngine`.
+    @ObservationIgnored private var mediaPages: Set<BrowserTab.ID> = []
+    /// Bumped when a tab's page moves to the other engine, so its host shows the new page.
+    private(set) var engineSwitches = 0
+    /// Tabs whose page crashed, and whether it ran out of memory, until they're reloaded.
+    private(set) var crashedTabs: [BrowserTab.ID: Bool] = [:]
     @ObservationIgnored private var pages: [BrowserTab.ID: BrowserPage] = [:]
     @ObservationIgnored private var tabIDs: [ObjectIdentifier: BrowserTab.ID] = [:]
     /// The window in front. New tabs from pages open there.
@@ -18,6 +27,7 @@ final class PagePool: BrowserPageDelegate {
     let history = HistoryStore()
     /// Each open page's profile and the address last recorded for it.
     @ObservationIgnored private var pageProfiles: [BrowserTab.ID: Profile.ID] = [:]
+    @ObservationIgnored private var profilesByTab: [BrowserTab.ID: Profile] = [:]
     @ObservationIgnored private var recordedURLs: [BrowserTab.ID: URL] = [:]
     @ObservationIgnored private var liveTitles: [BrowserTab.ID: String] = [:]
     @ObservationIgnored private var liveURLs: [BrowserTab.ID: URL] = [:]
@@ -58,8 +68,9 @@ final class PagePool: BrowserPageDelegate {
     /// Bumped when a download starts, so the sidebar can show the list.
     private(set) var downloadStartCount = 0
 
-    init(engine: BrowserEngine = Engines.make()) {
+    init(engine: BrowserEngine = Engines.make(), mediaEngine: BrowserEngine? = Engines.makeMediaEngine()) {
         self.engine = engine
+        self.mediaEngine = mediaEngine
         engine.observeDownloads { name in
             Download.destination(for: name, in: Self.downloadsFolder)
         } update: { [weak self] download in
@@ -69,11 +80,14 @@ final class PagePool: BrowserPageDelegate {
 
     func page(for tab: BrowserTab, profile: Profile) -> BrowserPage {
         if let page = pages[tab.id] { return page }
-        let page = engine.makePage(url: tab.url, profile: profile)
+        let usesMediaEngine = mediaEngine != nil && ProtectedMedia.needsSystemEngine(tab.url)
+        let page = (usesMediaEngine ? mediaEngine! : engine).makePage(url: tab.url, profile: profile)
         page.delegate = self
         pages[tab.id] = page
         tabIDs[ObjectIdentifier(page)] = tab.id
         pageProfiles[tab.id] = profile.id
+        profilesByTab[tab.id] = profile
+        if usesMediaEngine { mediaPages.insert(tab.id) }
         if profile.isPrivate == true { privatePages.insert(tab.id) }
         return page
     }
@@ -118,6 +132,7 @@ final class PagePool: BrowserPageDelegate {
     /// Deletes a removed profile's data from disk, and its history.
     func removeData(for profile: Profile) {
         engine.removeData(for: profile)
+        mediaEngine?.removeData(for: profile)
         history.removeProfile(profile.id)
     }
 
@@ -197,6 +212,7 @@ final class PagePool: BrowserPageDelegate {
     /// Clears a profile's data. Its open pages reload afterwards, so they don't keep showing
     /// what was signed in.
     func clearBrowsingData(_ data: BrowsingData, for profile: Profile, completion: @escaping @MainActor () -> Void) {
+        mediaEngine?.clearBrowsingData(data, for: profile) {}
         engine.clearBrowsingData(data, for: profile) { [weak self] in
             if let self, let store = self.store, data.contains(.cookies) {
                 for space in store.spaces(using: profile.id) {
@@ -211,6 +227,9 @@ final class PagePool: BrowserPageDelegate {
         if findTabID == id { findTabID = nil; findResult = nil }
         if fullscreenTabID == id { fullscreenTabID = nil }
         pageProfiles[id] = nil
+        profilesByTab[id] = nil
+        mediaPages.remove(id)
+        crashedTabs[id] = nil
         recordedURLs[id] = nil
         liveTitles[id] = nil
         liveURLs[id] = nil
@@ -273,6 +292,40 @@ final class PagePool: BrowserPageDelegate {
         recordHistory(for: id, title: title, url: url)
         applySiteZoom(page, tab: id, url: url)
         revision += 1
+        if let url, mediaEngine != nil, !mediaPages.contains(id), ProtectedMedia.needsSystemEngine(url) {
+            // Not from inside the engine's own callback.
+            Task { @MainActor in self.moveToMediaEngine(id, url: url) }
+        }
+    }
+
+    /// A tab that went to a streaming site carries on in WebKit. It stays there afterwards,
+    /// so sign-in pages and the site's own links keep the same cookies.
+    private func moveToMediaEngine(_ id: BrowserTab.ID, url: URL) {
+        guard let mediaEngine, let old = pages[id], let profile = profilesByTab[id], !mediaPages.contains(id) else { return }
+        tabIDs[ObjectIdentifier(old)] = nil
+        old.close()
+        let page = mediaEngine.makePage(url: url, profile: profile)
+        page.delegate = self
+        pages[id] = page
+        tabIDs[ObjectIdentifier(page)] = id
+        mediaPages.insert(id)
+        loadingProgress[id] = nil
+        engineSwitches += 1
+    }
+
+    /// Whether a tab's page runs on macOS's WebKit for protected video, for page info.
+    func usesMediaEngine(_ id: BrowserTab.ID) -> Bool { mediaPages.contains(id) }
+
+    func page(_ page: BrowserPage, didCrashOutOfMemory outOfMemory: Bool) {
+        guard let id = tabIDs[ObjectIdentifier(page)] else { return }
+        crashedTabs[id] = outOfMemory
+        loadingProgress[id] = nil
+        if fullscreenTabID == id { fullscreenTabID = nil }
+    }
+
+    func reloadCrashedTab(_ id: BrowserTab.ID) {
+        crashedTabs[id] = nil
+        pages[id]?.reload()
     }
 
     /// A new address is a visit; a new title for the same address only renames it.
@@ -322,6 +375,7 @@ final class PagePool: BrowserPageDelegate {
     func page(_ page: BrowserPage, didChangeLoading isLoading: Bool, progress: Double) {
         guard let id = tabIDs[ObjectIdentifier(page)] else { return }
         let wasLoading = loadingProgress[id] != nil
+        if isLoading, crashedTabs[id] != nil { crashedTabs[id] = nil }
         loadingProgress[id] = isLoading ? max(progress, loadingProgress[id] ?? 0) : nil
         // Toolbar buttons only care about starting and stopping, not each progress step.
         if wasLoading != isLoading { revision += 1 }

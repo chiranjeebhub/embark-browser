@@ -124,6 +124,8 @@ protocol BrowserPageDelegate: AnyObject {
     func page(_ page: BrowserPage, didChangeFavicon png: Data?)
     func page(_ page: BrowserPage, requestsCredentials request: CredentialRequest)
     func page(_ page: BrowserPage, hitCertificateError warning: CertificateWarning)
+    /// The page's renderer died, from a crash or from running out of memory.
+    func page(_ page: BrowserPage, didCrashOutOfMemory outOfMemory: Bool)
 }
 
 /// A site's sign-in prompt (HTTP authentication), answered once through `respond`.
@@ -232,6 +234,15 @@ enum Engines {
         return CEFEngine()
         #else
         return WebKitEngine()
+        #endif
+    }
+
+    /// WebKit for protected video when the main engine is Chromium.
+    @MainActor static func makeMediaEngine() -> BrowserEngine? {
+        #if ENGINE_CEF
+        return WebKitEngine()
+        #else
+        return nil
         #endif
     }
 }
