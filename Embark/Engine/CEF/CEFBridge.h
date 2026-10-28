@@ -69,6 +69,10 @@ typedef NS_ENUM(NSInteger, EMBPermissionValue) {
 /// A console line from the media script (it starts with `mediaMessagePrefix`), without the prefix.
 - (void)cefBrowser:(EMBCEFBrowser *)browser didPostMediaMessage:(NSString *)message
     NS_SWIFT_NAME(cefBrowser(_:didPostMediaMessage:));
+/// A console line from a script run with `runScript:` that reports its result (it starts with
+/// `scriptResultPrefix`), without the prefix.
+- (void)cefBrowser:(EMBCEFBrowser *)browser didReturnScriptResult:(NSString *)result
+    NS_SWIFT_NAME(cefBrowser(_:didReturnScriptResult:));
 /// The page's renderer process ended, from a crash or from running out of memory.
 - (void)cefBrowser:(EMBCEFBrowser *)browser renderProcessTerminatedOutOfMemory:(BOOL)outOfMemory
     NS_SWIFT_NAME(cefBrowser(_:renderProcessTerminatedOutOfMemory:));
@@ -164,6 +168,8 @@ typedef NS_ENUM(NSInteger, EMBDownloadState) {
 @property (nonatomic, copy, nullable) NSString *loginMessagePrefix;
 /// Console lines starting with this go to `cefBrowser:didPostMediaMessage:` and aren't logged.
 @property (nonatomic, copy, nullable) NSString *mediaMessagePrefix;
+/// Console lines starting with this go to `cefBrowser:didReturnScriptResult:` and aren't logged.
+@property (nonatomic, copy, nullable) NSString *scriptResultPrefix;
 /// Runs JavaScript in the main frame of the current page.
 - (void)runScript:(NSString *)script;
 

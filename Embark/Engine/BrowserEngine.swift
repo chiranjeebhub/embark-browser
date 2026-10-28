@@ -93,6 +93,9 @@ protocol BrowserPage: AnyObject {
     func fillLogin(username: String, password: String)
     /// Plays, pauses, skips or mutes what the page is playing (see MediaScript).
     func controlMedia(_ command: MediaCommand)
+    /// Runs a JavaScript expression in the page's main frame, for reader mode and translation.
+    /// `completion` gets its value (awaited if it's a promise) as JSON, or nil if it failed.
+    func evaluate(_ script: String, completion: @escaping @MainActor (String?) -> Void)
 }
 
 extension BrowserPage {
@@ -116,6 +119,34 @@ extension BrowserPage {
     func showDevTools() {}
     func fillLogin(username: String, password: String) {}
     func controlMedia(_ command: MediaCommand) {}
+    func evaluate(_ script: String, completion: @escaping @MainActor (String?) -> Void) { completion(nil) }
+
+    /// `evaluate` that gives up after `timeout`, e.g. when the page navigates away first.
+    func evaluate(_ script: String, timeout: Duration = .seconds(10)) async -> String? {
+        let wait = ScriptWait()
+        let timer = Task { @MainActor in
+            try? await Task.sleep(for: timeout)
+            wait.finish(nil)
+        }
+        defer { timer.cancel() }
+        return await withCheckedContinuation { continuation in
+            MainActor.assumeIsolated {
+                wait.continuation = continuation
+                evaluate(script) { wait.finish($0) }
+            }
+        }
+    }
+}
+
+/// Resumes an `evaluate` once, with its result or after the timeout.
+@MainActor
+private final class ScriptWait {
+    var continuation: CheckedContinuation<String?, Never>?
+
+    func finish(_ value: String?) {
+        continuation?.resume(returning: value)
+        continuation = nil
+    }
 }
 
 @MainActor

@@ -202,7 +202,11 @@ private struct AddressPill: View {
             // Opens the address editor over the pill (see AddressEditor), as in Arc.
             .onTapGesture { store.isEditingAddress = true }
 
+            if let tab, url != nil {
+                PageActionButtons(tabID: tab.id)
+            }
             if let url {
+                ShareButton(url: url)
                 if justCopied {
                     Text("Copied").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         .transition(.opacity)
@@ -1106,6 +1110,7 @@ private struct TabRow: View {
             if pool.media[tab.id] != nil || pool.mutedTabs.contains(tab.id) {
                 Button(pool.mutedTabs.contains(tab.id) ? "Unmute Tab" : "Mute Tab") { pool.toggleMuted(tab.id) }
             }
+            Button("Share…") { PageSharing.share(tab.url) }
             Divider()
             Button("Close Tab") { pool.close(tab.id); store.closeTab(tab.id) }
         }

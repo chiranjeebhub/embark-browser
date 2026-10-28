@@ -3,7 +3,8 @@ import Foundation
 /// Things the ⌘T bar can do besides opening pages, found by typing part of their name.
 enum BrowserAction: String, CaseIterable, Identifiable {
     case newWindow, newPrivateWindow, newSpace, newFolder, newSplit
-    case addToFavorites, copyURL, reload, closeTab, reopenClosedTab
+    case addToFavorites, copyURL, sharePage, reload, closeTab, reopenClosedTab
+    case showReader, translatePage
     case findOnPage, zoomIn, zoomOut, actualSize, print, developerTools
     case showHistory, clearHistory, toggleSidebar, settings
 
@@ -18,6 +19,9 @@ enum BrowserAction: String, CaseIterable, Identifiable {
         case .newSplit: "New Split View"
         case .addToFavorites: "Add to Favorites"
         case .copyURL: "Copy URL"
+        case .sharePage: "Share Page"
+        case .showReader: "Show Reader"
+        case .translatePage: "Translate Page"
         case .reload: "Reload Page"
         case .closeTab: "Close Tab"
         case .reopenClosedTab: "Reopen Closed Tab"
@@ -41,6 +45,9 @@ enum BrowserAction: String, CaseIterable, Identifiable {
         case .newSplit: ["side by side"]
         case .addToFavorites: ["pin", "bookmark"]
         case .copyURL: ["link", "address"]
+        case .sharePage: ["send", "airdrop", "email", "messages"]
+        case .showReader: ["reader mode", "article", "read"]
+        case .translatePage: ["language"]
         case .reload: ["refresh"]
         case .developerTools: ["inspect", "console", "devtools"]
         case .clearHistory: ["delete", "browsing data"]
@@ -59,6 +66,9 @@ enum BrowserAction: String, CaseIterable, Identifiable {
         case .newSplit: "rectangle.split.2x1"
         case .addToFavorites: "star"
         case .copyURL: "link"
+        case .sharePage: "square.and.arrow.up"
+        case .showReader: "doc.plaintext"
+        case .translatePage: "translate"
         case .reload: "arrow.clockwise"
         case .closeTab: "xmark"
         case .reopenClosedTab: "arrow.uturn.backward"

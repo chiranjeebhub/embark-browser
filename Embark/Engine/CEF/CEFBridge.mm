@@ -217,6 +217,7 @@ private:
 - (void)handleRenderProcessTerminatedOutOfMemory:(BOOL)outOfMemory;
 - (void)handleLoginMessage:(NSString *)message;
 - (void)handleMediaMessage:(NSString *)message;
+- (void)handleScriptResult:(NSString *)result;
 @end
 
 namespace {
@@ -587,6 +588,11 @@ public:
     bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString &message, const CefString &, int) override {
         NSString *text = @(message.ToString().c_str());
         NSString *login = owner_.loginMessagePrefix, *media = owner_.mediaMessagePrefix;
+        NSString *resultPrefix = owner_.scriptResultPrefix;
+        if (resultPrefix.length && [text hasPrefix:resultPrefix]) {
+            [owner_ handleScriptResult:[text substringFromIndex:resultPrefix.length]];
+            return true;
+        }
         if (login.length && [text hasPrefix:login]) {
             [owner_ handleLoginMessage:[text substringFromIndex:login.length]];
             return true;
@@ -967,6 +973,10 @@ private:
 
 - (void)handleMediaMessage:(NSString *)message {
     [self.delegate cefBrowser:self didPostMediaMessage:message];
+}
+
+- (void)handleScriptResult:(NSString *)result {
+    [self.delegate cefBrowser:self didReturnScriptResult:result];
 }
 
 - (void)runScript:(NSString *)script {
