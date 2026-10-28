@@ -59,6 +59,8 @@ struct Space: Identifiable, Codable, Hashable {
     var splits: [Split]?
     /// Folders in the tab list, siblings in this order. Optional so older saved state loads.
     var folders: [Folder]?
+    /// The photo behind the new tab page. nil is the picture of the day.
+    var wallpaper: Wallpaper?
 }
 
 /// Two to four tabs of a space shown side by side (or stacked) as one item in the tab list.
