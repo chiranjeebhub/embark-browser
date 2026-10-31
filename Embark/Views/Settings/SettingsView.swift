@@ -192,7 +192,7 @@ private struct SidebarPaneRow: View {
         .onHover { hovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction(perform: action)
+        .accessibilityAction(.default) { action() }
     }
 }
 
