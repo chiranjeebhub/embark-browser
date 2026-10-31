@@ -9,6 +9,10 @@ options:
   bundleIdPrefix: dev.embark
   deploymentTarget:
     macOS: "26.0"
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -17,6 +21,11 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     CLANG_CXX_LANGUAGE_STANDARD: c++20
     CLANG_ENABLE_OBJC_ARC: YES
+    # Automatic updates. The appcast is published with each GitHub release
+    # (.github/workflows/release.yml). The public key is the one scripts/setup-updates.sh
+    # prints; while it's empty, the updater stays off.
+    SPARKLE_FEED_URL: https://github.com/chiranjeebhub/embark-browser/releases/latest/download/appcast.xml
+    SPARKLE_PUBLIC_KEY: ""
 targets:
   Embark:
     type: application
@@ -25,6 +34,8 @@ targets:
       - path: Embark
         excludes:
           - "Engine/CEF/**"
+    dependencies:
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.embark.browser
@@ -47,6 +58,7 @@ targets:
     dependencies:
       - target: EmbarkHelper
         embed: false
+      - package: Sparkle
     settings:
       base:
         PRODUCT_NAME: Embark

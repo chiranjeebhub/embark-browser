@@ -17,6 +17,8 @@ struct SettingsView: View {
                 .tabItem { Label("Privacy", systemImage: "hand.raised") }
             ShortcutsSettings()
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+            UpdatesSettings()
+                .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
             AboutSettings()
                 .tabItem { Label("About", systemImage: "info.circle") }
         }

@@ -17,5 +17,15 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Automatic updates (Sparkle). The feed and key come from project.yml; with no key the
+	     updater stays off. See docs/RELEASING.md. -->
+	<key>SUFeedURL</key>
+	<string>$(SPARKLE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_KEY)</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
 </dict>
 </plist>

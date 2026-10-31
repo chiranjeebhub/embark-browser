@@ -27,7 +27,10 @@ struct EmbarkApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
-        .commands { BrowserCommands(fallbackStore: store, pool: pool) }
+        .commands {
+            BrowserCommands(fallbackStore: store, pool: pool)
+            UpdateCommands()
+        }
 
         WindowGroup("Private Window", id: "private") {
             BrowserWindowRoot(isPrivate: true)
@@ -90,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         EMBCEFRuntime.setBlocksThirdPartyCookies(UserDefaults.standard.bool(forKey: PreferenceKey.blocksThirdPartyCookies))
         #endif
+        AppUpdater.shared.start()
     }
 
     /// Another Embark from the same bundle, e.g. launched from a second copy of the app.
@@ -247,6 +251,8 @@ struct BrowserCommands: Commands {
             }
             .disabled(store.selectedSpace?.recentlyClosed?.isEmpty ?? true)
             Divider()
+            Button("Share…") { if let url = store.selectedTab?.url { PageSharing.share(url) } }
+                .disabled(store.selectedTab == nil)
             Button("Print…") { selectedPage?.print() }
                 .keyboardShortcut("p")
                 .disabled(selectedPage == nil)
@@ -259,6 +265,12 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("-")
             Button("Actual Size") { pool.zoom(store.selectedTab?.id) { _ in 1 } }
                 .keyboardShortcut("0")
+            Divider()
+            Button(isReading ? "Exit Reader" : "Show Reader") { pool.tools.toggleReader(store.selectedTab?.id) }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(selectedPage == nil)
+            Button(isTranslated ? "Show Original" : "Translate Page") { pool.tools.toggleTranslation(store.selectedTab?.id) }
+                .disabled(selectedPage == nil)
             Divider()
             Button("Developer Tools") { selectedPage?.showDevTools() }
                 .keyboardShortcut("i", modifiers: [.command, .option])
@@ -332,6 +344,8 @@ struct BrowserCommands: Commands {
     }
 
     private var selectedPage: BrowserPage? { pool.existingPage(for: store.selectedTab?.id) }
+    private var isReading: Bool { store.selectedTab.map { pool.tools.readers[$0.id] != nil } ?? false }
+    private var isTranslated: Bool { store.selectedTab.map { pool.tools.translations[$0.id] != nil } ?? false }
 
     /// ⌘G opens the find bar with the last search if it's closed.
     private func findAgain(forward: Bool) {
