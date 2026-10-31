@@ -150,9 +150,9 @@ enum MediaScript {
           if (probe.canPlayType('video/mp4; codecs="avc1.42E01E"') === '') {
             let flagged = false, askedH264 = false, hasOther = false;
             const flag = () => { if (!flagged) { flagged = true; send(JSON.stringify({ unsupported: true })); } };
-            const isH264 = (t) => /avc1|avc3|mp4a|video\/mp4|mpegurl/i.test(String(t));
+            const isH264 = (t) => /avc1|avc3|mp4a|video\\/mp4|mpegurl/i.test(String(t));
             const isOther = (t) => /vp8|vp9|vp09|av01|opus|webm/i.test(String(t));
-            const mp4 = (s) => s && /\.(mp4|m4v|mov|m3u8)(\?|#|$)|video\/mp4|mpegurl/i.test(s);
+            const mp4 = (s) => s && /\\.(mp4|m4v|mov|m3u8)(\\?|#|$)|video\\/mp4|mpegurl/i.test(s);
             const check = (e) => {
               // A failed <source> reports on itself, not on its video.
               if (e instanceof HTMLSourceElement) { if (isMedia(e.parentElement) && (mp4(e.src) || mp4(e.type))) flag(); return; }
