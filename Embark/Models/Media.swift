@@ -15,14 +15,17 @@ struct MediaState: Equatable {
     var canPictureInPicture: Bool
 }
 
-/// A media script message: nothing is playing or paused part way, or the media's state.
+/// A media script message: nothing is playing or paused part way, the media's state, or the
+/// page has video in a codec this engine can't play (H.264 or AAC in prebuilt Chromium).
 enum MediaMessage: Equatable {
     case idle
     case media(MediaState)
+    case unsupportedCodec
 
     static func parse(_ json: String) -> MediaMessage? {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
-              let active = object["active"] as? Bool else { return nil }
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
+        if object["unsupported"] as? Bool == true { return .unsupportedCodec }
+        guard let active = object["active"] as? Bool else { return nil }
         guard active else { return .idle }
         let artwork = (object["artwork"] as? String).flatMap(URL.init(string:))
             .flatMap { ["https", "http", "data"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
@@ -141,6 +144,42 @@ enum MediaScript {
             }
             schedule();
           };
+          // Without H.264 (prebuilt Chromium), notice video that needs it: a media element that
+          // fails on an MP4 or HLS source, or a site that asks for H.264 and never for VP9 or AV1.
+          const probe = document.createElement('video');
+          if (probe.canPlayType('video/mp4; codecs="avc1.42E01E"') === '') {
+            let flagged = false, askedH264 = false, hasOther = false;
+            const flag = () => { if (!flagged) { flagged = true; send(JSON.stringify({ unsupported: true })); } };
+            const isH264 = (t) => /avc1|avc3|mp4a|video\/mp4|mpegurl/i.test(String(t));
+            const isOther = (t) => /vp8|vp9|vp09|av01|opus|webm/i.test(String(t));
+            const mp4 = (s) => s && /\.(mp4|m4v|mov|m3u8)(\?|#|$)|video\/mp4|mpegurl/i.test(s);
+            const check = (e) => {
+              // A failed <source> reports on itself, not on its video.
+              if (e instanceof HTMLSourceElement) { if (isMedia(e.parentElement) && (mp4(e.src) || mp4(e.type))) flag(); return; }
+              if (!isMedia(e) || !e.error || (e.error.code !== 3 && e.error.code !== 4)) return;
+              if ([e.currentSrc, e.src].some(mp4)) flag();
+            };
+            document.addEventListener('error', (ev) => check(ev.target), true);
+            // Chromium runs this script once the page has loaded, so look at what failed before.
+            all().forEach(check);
+            const MS = window.MediaSource;
+            if (MS) {
+              const supported = MS.isTypeSupported.bind(MS);
+              MS.isTypeSupported = (type) => {
+                const ok = supported(type);
+                if (ok && isOther(type)) hasOther = true;
+                if (!ok && isH264(type) && !askedH264) {
+                  askedH264 = true;
+                  setTimeout(() => { if (!hasOther && document.querySelector('video')) flag(); }, 2500);
+                }
+                return ok;
+              };
+              const add = MS.prototype.addSourceBuffer;
+              MS.prototype.addSourceBuffer = function (type) {
+                try { return add.apply(this, arguments); } catch (err) { if (isH264(type)) flag(); throw err; }
+              };
+            }
+          }
           // Media Session titles change between tracks without an event.
           setInterval(() => { if (last) report(); }, 2000);
           report();

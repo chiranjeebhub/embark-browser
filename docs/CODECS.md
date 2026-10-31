@@ -5,6 +5,23 @@ proprietary codecs, so MP4 files with H.264 video or AAC audio do not play. WebM
 Opus work. Streaming sites with DRM (Netflix, Disney+) are a separate problem: they need
 Widevine, which Google licenses per browser.
 
+## What Embark does about it
+
+Pages that need H.264 run on macOS's WebKit instead, which has Apple's codecs (and FairPlay
+for the streaming sites). `Models/ProtectedMedia.swift` lists the sites that go there
+automatically: copy-protected streaming sites, and video sites that serve only H.264 (X,
+Instagram, Reddit, Twitch, Vimeo, TikTok).
+
+On any other site, the media script (`Models/Media.swift`) watches for video that fails for
+lack of H.264: a media element that errors on an MP4 or HLS source, a `MediaSource` that
+refuses an H.264 type, or a site that asks for H.264 and never for VP9 or AV1. The tab then
+offers **Play in Safari Engine**. Choosing it reloads the tab in WebKit and remembers the site
+(`SystemEngineSites` in user defaults); page info has **Use Chromium** to undo it. The check
+only runs when Chromium can't play H.264, so it does nothing in WebKit or in a codec build.
+
+A tab in WebKit keeps its own cookies (per profile) and runs no Chrome extensions. Video in
+iframes from other sites isn't detected yet.
+
 ## Building CEF with H.264
 
 ```sh

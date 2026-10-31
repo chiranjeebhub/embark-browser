@@ -81,6 +81,12 @@ final class PagePool: BrowserPageDelegate {
     /// when they left the screen.
     private(set) var quietMedia: Set<BrowserTab.ID> = []
     @ObservationIgnored private var mediaStartedAt: [BrowserTab.ID: Date] = [:]
+    /// Tabs whose video needs H.264 or AAC, which the main engine can't play. They offer to
+    /// play it in WebKit.
+    private(set) var unsupportedVideoTabs: Set<BrowserTab.ID> = []
+    /// Sites moved to WebKit with "Play in Safari Engine", kept across launches.
+    @ObservationIgnored private var systemEngineSites =
+        Set(UserDefaults.standard.stringArray(forKey: "SystemEngineSites") ?? [])
 
     /// Downloads this session, newest first.
     private(set) var downloads: [Download] = []
@@ -100,7 +106,7 @@ final class PagePool: BrowserPageDelegate {
 
     func page(for tab: BrowserTab, profile: Profile) -> BrowserPage {
         if let page = pages[tab.id] { return page }
-        let usesMediaEngine = mediaEngine != nil && ProtectedMedia.needsSystemEngine(tab.url)
+        let usesMediaEngine = mediaEngine != nil && ProtectedMedia.needsSystemEngine(tab.url, chosen: systemEngineSites)
         let page = (usesMediaEngine ? mediaEngine! : engine).makePage(url: tab.url, profile: profile)
         page.delegate = self
         pages[tab.id] = page
@@ -263,6 +269,7 @@ final class PagePool: BrowserPageDelegate {
         media[id] = nil
         quietMedia.remove(id)
         mediaStartedAt[id] = nil
+        unsupportedVideoTabs.remove(id)
         privatePages.remove(id)
         tools.forget(id)
         credentialRequests.removeValue(forKey: id)?.respond(nil, nil)
@@ -320,6 +327,7 @@ final class PagePool: BrowserPageDelegate {
         if let url, let previous = liveURLs[id], previous != url {
             // A new page: its form reports itself again, and a sign-in that led here went through.
             if loginForms.contains(id) { loginForms.remove(id) }
+            if unsupportedVideoTabs.contains(id) { unsupportedVideoTabs.remove(id) }
             if let candidate = loginCandidates[id], candidate.url != url { offerToSave(id) }
         }
         store?.updateTab(id, title: title, url: url)
@@ -329,7 +337,7 @@ final class PagePool: BrowserPageDelegate {
         recordHistory(for: id, title: title, url: url)
         applySiteZoom(page, tab: id, url: url)
         revision += 1
-        if let url, mediaEngine != nil, !mediaPages.contains(id), ProtectedMedia.needsSystemEngine(url) {
+        if let url, mediaEngine != nil, !mediaPages.contains(id), ProtectedMedia.needsSystemEngine(url, chosen: systemEngineSites) {
             // Not from inside the engine's own callback.
             Task { @MainActor in self.moveToMediaEngine(id, url: url) }
         }
@@ -338,18 +346,52 @@ final class PagePool: BrowserPageDelegate {
     /// A tab that went to a streaming site carries on in WebKit. It stays there afterwards,
     /// so sign-in pages and the site's own links keep the same cookies.
     private func moveToMediaEngine(_ id: BrowserTab.ID, url: URL) {
-        guard let mediaEngine, let old = pages[id], let profile = profilesByTab[id], !mediaPages.contains(id) else { return }
+        guard !mediaPages.contains(id) else { return }
+        movePage(id, url: url, toMediaEngine: true)
+    }
+
+    private func movePage(_ id: BrowserTab.ID, url: URL, toMediaEngine: Bool) {
+        guard let mediaEngine, let old = pages[id], let profile = profilesByTab[id] else { return }
         tabIDs[ObjectIdentifier(old)] = nil
         old.close()
-        let page = mediaEngine.makePage(url: url, profile: profile)
+        let page = (toMediaEngine ? mediaEngine : engine).makePage(url: url, profile: profile)
         page.delegate = self
         pages[id] = page
         tabIDs[ObjectIdentifier(page)] = id
-        mediaPages.insert(id)
+        if toMediaEngine { mediaPages.insert(id) } else { mediaPages.remove(id) }
         if mutedTabs.contains(id) { page.setTabMuted(true) }
         loadingProgress[id] = nil
         media[id] = nil
         engineSwitches += 1
+    }
+
+    /// "Play in Safari Engine": moves the tab to WebKit, and the site's later pages with it.
+    func playInSystemEngine(_ id: BrowserTab.ID) {
+        unsupportedVideoTabs.remove(id)
+        guard let url = liveURLs[id] else { return }
+        if let site = ProtectedMedia.siteHost(url), !privatePages.contains(id) {
+            systemEngineSites.insert(site)
+            UserDefaults.standard.set(systemEngineSites.sorted(), forKey: "SystemEngineSites")
+        }
+        moveToMediaEngine(id, url: url)
+    }
+
+    func dismissUnsupportedVideo(_ id: BrowserTab.ID) {
+        unsupportedVideoTabs.remove(id)
+    }
+
+    /// Whether the user moved this tab's site to WebKit, so page info can offer to undo it.
+    func isSystemEngineSite(_ id: BrowserTab.ID) -> Bool {
+        guard mediaPages.contains(id), let url = liveURLs[id], let site = ProtectedMedia.siteHost(url) else { return false }
+        return systemEngineSites.contains(site)
+    }
+
+    /// Undoes "Play in Safari Engine" for the tab's site and reloads the tab in Chromium.
+    func useMainEngine(_ id: BrowserTab.ID) {
+        guard let url = liveURLs[id], let site = ProtectedMedia.siteHost(url) else { return }
+        systemEngineSites.remove(site)
+        UserDefaults.standard.set(systemEngineSites.sorted(), forKey: "SystemEngineSites")
+        if !ProtectedMedia.needsSystemEngine(url) { movePage(id, url: url, toMediaEngine: false) }
     }
 
     /// Whether a tab's page runs on macOS's WebKit for protected video, for page info.
@@ -376,6 +418,8 @@ final class PagePool: BrowserPageDelegate {
                 if quietMedia.contains(id) { quietMedia.remove(id) }
             }
             if media[id] != state { media[id] = state }
+        case .unsupportedCodec:
+            if mediaEngine != nil, !mediaPages.contains(id) { unsupportedVideoTabs.insert(id) }
         }
     }
 
