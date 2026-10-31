@@ -83,16 +83,12 @@ private struct SettingsSidebar: View {
                 .padding(.bottom, 14)
 
             if search.trimmingCharacters(in: .whitespaces).isEmpty {
-                GlassEffectContainer(spacing: 4) {
-                    VStack(spacing: 2) {
-                        ForEach(SettingsPane.allCases.filter { !$0.isFooter }) { row($0) }
-                    }
+                VStack(spacing: 2) {
+                    ForEach(SettingsPane.allCases.filter { !$0.isFooter }) { row($0) }
                 }
                 Spacer()
-                GlassEffectContainer(spacing: 4) {
-                    VStack(spacing: 2) {
-                        ForEach(SettingsPane.allCases.filter(\.isFooter)) { row($0) }
-                    }
+                VStack(spacing: 2) {
+                    ForEach(SettingsPane.allCases.filter(\.isFooter)) { row($0) }
                 }
             } else {
                 results
@@ -179,10 +175,17 @@ private struct SidebarPaneRow: View {
         .padding(.horizontal, 7)
         .frame(height: 34)
         .background {
+            // A lit pane of glass behind the row. Drawn as a fill rather than a glassEffect,
+            // which in a container composites over the row's icon and title.
             if isSelected {
-                Color.clear
-                    .glassEffect(.regular.tint(.white.opacity(0.4)), in: .rect(cornerRadius: 10))
-                    .glassEffectID("selected-pane", in: namespace)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.white.opacity(0.22))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(.white.opacity(0.3), lineWidth: 0.5)
+                    }
+                    .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                    .matchedGeometryEffect(id: "selected-pane", in: namespace)
             } else if hovering {
                 RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.14))
             }
