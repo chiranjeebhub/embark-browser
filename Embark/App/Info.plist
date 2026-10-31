@@ -17,6 +17,21 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Privacy strings for what Chromium (and WebKit) can reach for on a site's behalf. macOS kills
+	     an app that touches Bluetooth or system audio without one, and quietly denies location.
+	     Camera and microphone strings come from project.yml. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Websites you allow can use Bluetooth, such as to sign in with a passkey on your phone.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Websites you allow can use your location.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Websites you allow can use your location.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Websites you allow can capture the sound your Mac plays when you share your screen.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Websites can reach devices on your local network, such as printers and routers.</string>
+	<key>NSWebBrowserPublicKeyCredentialUsageDescription</key>
+	<string>Websites can sign you in with passkeys saved in your Apple account.</string>
 	<!-- Automatic updates (Sparkle). The feed and key come from project.yml; with no key the
 	     updater stays off. See docs/RELEASING.md. -->
 	<key>SUFeedURL</key>
