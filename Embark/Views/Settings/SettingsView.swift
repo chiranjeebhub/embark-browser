@@ -41,6 +41,7 @@ struct SettingsView: View {
         case .passwords: PasswordsSettings()
         case .privacy: PrivacySettings()
         case .shortcuts: ShortcutsSettings()
+        case .updates: UpdatesSettings()
         case .about: AboutSettings()
         }
     }

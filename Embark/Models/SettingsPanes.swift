@@ -8,7 +8,7 @@ extension PreferenceKey {
 /// One page of Settings. To add a page, add a case here, its look below, and its view in
 /// `SettingsView.page(_:)`; its rows go in `SettingsSearch.index` so search finds them.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, appearance, profiles, passwords, privacy, shortcuts, about
+    case general, appearance, profiles, passwords, privacy, shortcuts, updates, about
 
     var id: String { rawValue }
 
@@ -20,6 +20,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .passwords: "Passwords"
         case .privacy: "Privacy"
         case .shortcuts: "Shortcuts"
+        case .updates: "Updates"
         case .about: "About Embark"
         }
     }
@@ -32,6 +33,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .passwords: "Logins saved in your Mac’s Keychain."
         case .privacy: "Cookies, sign-ins and what sites can use."
         case .shortcuts: "Everything you can do from the keyboard."
+        case .updates: "New versions of Embark, checked for and installed by itself."
         case .about: "Open source, made for the Mac."
         }
     }
@@ -44,6 +46,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .passwords: "key.fill"
         case .privacy: "hand.raised.fill"
         case .shortcuts: "command"
+        case .updates: "arrow.down"
         case .about: "sailboat.fill"
         }
     }
@@ -57,12 +60,13 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .passwords: [Color(red: 0.55, green: 0.6, blue: 0.68), Color(red: 0.32, green: 0.36, blue: 0.44)]
         case .privacy: [Color(red: 0.36, green: 0.55, blue: 1), Color(red: 0.25, green: 0.3, blue: 0.85)]
         case .shortcuts: [Color(red: 0.42, green: 0.42, blue: 0.48), Color(red: 0.2, green: 0.2, blue: 0.26)]
+        case .updates: [Color(red: 0.35, green: 0.85, blue: 0.5), Color(red: 0.15, green: 0.62, blue: 0.35)]
         case .about: [Color(red: 0.44, green: 0.48, blue: 1), Color(red: 0.13, green: 0.7, blue: 0.65)]
         }
     }
 
     /// Shown in the sidebar after a gap, away from the pages you change things on.
-    var isFooter: Bool { self == .about }
+    var isFooter: Bool { self == .updates || self == .about }
 }
 
 // MARK: - Search
@@ -95,6 +99,8 @@ enum SettingsSearch {
         Item(pane: .privacy, title: "Start every session signed out", keywords: "clear cookies launch sign out"),
         Item(pane: .privacy, title: "Site permissions", keywords: "camera microphone notifications location sound allow block"),
         Item(pane: .shortcuts, title: "Keyboard shortcuts", keywords: "keys hotkeys command"),
+        Item(pane: .updates, title: "Check for updates automatically", keywords: "update upgrade new version sparkle"),
+        Item(pane: .updates, title: "Download and install updates automatically", keywords: "update auto install background"),
         Item(pane: .about, title: "Version", keywords: "about update license github source report problem"),
     ]
 

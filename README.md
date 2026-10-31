@@ -12,6 +12,11 @@ powered by Chromium.
   go to any address or search.
 - **Split view** (⌘⇧=): two tabs side by side.
 - **Fast:** tabs stay live for instant switching, idle tabs sleep to save memory.
+- **Reader mode** (⇧⌘R): articles alone, in your choice of theme, font and size, and read
+  aloud. Uses Mozilla's [Readability](https://github.com/mozilla/readability) (Apache 2.0).
+- **Translate:** pages in other languages translate on your Mac with Apple's Translation;
+  nothing is sent to a server.
+- **Share** pages with AirDrop, Messages, Mail and the rest of the macOS share menu.
 
 > Status: early. The UI runs on WebKit while the Chromium engine is brought up.
 > See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -49,6 +54,11 @@ The first run creates an "Embark Local Dev" identity in its own keychain under
 "Always Allow" once after that; later rebuilds signed the same way are remembered. CI
 doesn't sign and isn't affected.
 
+### Releases and updates
+
+Releases are built by GitHub Actions and installed copies update themselves with Sparkle. See
+[docs/RELEASING.md](docs/RELEASING.md) for the one-time setup and how to publish a release.
+
 ### Tests
 
 ```sh
@@ -71,6 +81,7 @@ xcodebuild test -project Embark.xcodeproj -scheme EmbarkTests -destination 'plat
 | Stop loading | ⌘. |
 | Print | ⌘P |
 | Developer tools | ⌥⌘I |
+| Reader mode | ⇧⌘R |
 | New folder | ⌥⌘N |
 | Back / forward / reload | ⌘[ / ⌘] / ⌘R |
 | Add to favorites | ⌘D |
