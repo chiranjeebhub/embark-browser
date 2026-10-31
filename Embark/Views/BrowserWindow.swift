@@ -293,6 +293,14 @@ struct BrowserWindow: View {
                 }
             }
             .animation(.snappy(duration: 0.2), value: pool.pendingLogins[tab.id])
+            .overlay(alignment: .bottom) {
+                if pool.unsupportedVideoTabs.contains(tab.id) {
+                    UnsupportedVideoCard(tabID: tab.id)
+                        .padding(.bottom, 14)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: pool.unsupportedVideoTabs.contains(tab.id))
             .onGeometryChange(for: CGSize.self) { $0.size } action: { PageDropHandler.pageSize = $0 }
             .onDrop(of: [.utf8PlainText], delegate: PageDropHandler(store: store, zone: $pageDropZone))
             .animation(.snappy(duration: 0.2), value: pageDropZone)

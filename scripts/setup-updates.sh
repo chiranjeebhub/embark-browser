@@ -36,10 +36,19 @@ curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKL
 PUBLIC_KEY="$("$WORK/bin/generate_keys" --account "$ACCOUNT" -p)"
 "$WORK/bin/generate_keys" --account "$ACCOUNT" -x "$WORK/sparkle-private-key" >/dev/null
 
-echo "Exporting the \"Embark Local Dev\" identity"
-security unlock-keychain -p "$(cat "$SIGNING_DIR/keychain-password")" "$KEYCHAIN"
-P12_PASSWORD="$(openssl rand -hex 24)"
-security export -k "$KEYCHAIN" -t identities -f pkcs12 -P "$P12_PASSWORD" -o "$WORK/identity.p12"
+if [ -f "$SIGNING_DIR/identity.p12" ]; then
+  # sign-local.sh keeps the identity it made, protected by the keychain's password.
+  cp "$SIGNING_DIR/identity.p12" "$WORK/identity.p12"
+  P12_PASSWORD="$(cat "$SIGNING_DIR/keychain-password")"
+else
+  echo "Exporting the \"Embark Local Dev\" identity"
+  echo "If macOS asks for the \"embark-signing\" keychain password, it is in"
+  echo "  $SIGNING_DIR/keychain-password"
+  echo "Enter it and choose Always Allow."
+  security unlock-keychain -p "$(cat "$SIGNING_DIR/keychain-password")" "$KEYCHAIN"
+  P12_PASSWORD="$(openssl rand -hex 24)"
+  security export -k "$KEYCHAIN" -t identities -f pkcs12 -P "$P12_PASSWORD" -o "$WORK/identity.p12"
+fi
 
 echo "Saving repository secrets on $REPO"
 gh secret set SPARKLE_PRIVATE_KEY --repo "$REPO" < "$WORK/sparkle-private-key"

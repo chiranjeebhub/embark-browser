@@ -132,3 +132,33 @@ struct CrashedPageView: View {
         .background(.background)
     }
 }
+
+/// On a page whose video needs H.264, which Chromium here can't play: offers to open the site
+/// in macOS's WebKit instead. Nothing moves until it's clicked, since that reloads the page.
+struct UnsupportedVideoCard: View {
+    let tabID: BrowserTab.ID
+    @Environment(PagePool.self) private var pool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "play.slash").font(.system(size: 18)).foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This video can't play in Chromium")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("The Safari engine can play it. The page reloads, and you may need to sign in to this site again.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Not Now") { pool.dismissUnsupportedVideo(tabID) }
+            Button("Play in Safari Engine") { pool.playInSystemEngine(tabID) }
+                .buttonStyle(.borderedProminent)
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(width: 520)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
+    }
+}

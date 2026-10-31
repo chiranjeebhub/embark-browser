@@ -5,6 +5,7 @@ import Testing
 struct MediaTests {
     @Test func idleAndBadMessages() {
         #expect(MediaMessage.parse(#"{"active":false}"#) == .idle)
+        #expect(MediaMessage.parse(#"{"unsupported":true}"#) == .unsupportedCodec)
         #expect(MediaMessage.parse("nope") == nil)
         #expect(MediaMessage.parse(#"{"playing":true}"#) == nil)
     }

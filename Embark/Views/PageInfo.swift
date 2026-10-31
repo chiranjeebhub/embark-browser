@@ -57,6 +57,7 @@ struct PageInfoPopover: View {
                           tint: isSecure ? nil : .orange,
                           title: isSecure ? "Connection is secure" : "Not secure",
                           subtitle: nil) { screen = .connection }
+            if pool.usesMediaEngine(tab.id) { systemEngineRow }
             Divider().padding(.vertical, 6)
             ForEach(shownPermissions) { permission in
                 PermissionRow(permission: permission, value: values[permission] ?? .default,
@@ -77,6 +78,28 @@ struct PageInfoPopover: View {
                 showsSiteSettings = true
             }
         }
+    }
+
+    /// The tab runs on macOS's WebKit so its video plays (see ProtectedMedia).
+    private var systemEngineRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "play.rectangle").frame(width: 22).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Plays video with the Safari engine").font(.system(size: 13))
+                Text("Chrome extensions don't run on this site.").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            if pool.isSystemEngineSite(tab.id) {
+                Button("Use Chromium") {
+                    isPresented = false
+                    pool.useMainEngine(tab.id)
+                }
+                .controlSize(.small)
+                .help("Open this site in Chromium again. Its video may not play.")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
     }
 
     private var connection: some View {
