@@ -25,7 +25,10 @@ struct SettingsView: View {
                 .padding([.vertical, .trailing], 8)
                 .transition(.opacity)
         }
-        .frame(width: 880, height: 640)
+        // Flexible height: once the content runs under the title bar, the window is a title
+        // bar taller than it was laid out for, and a fixed height leaves a band at the bottom.
+        .frame(width: 880)
+        .frame(minHeight: 640, idealHeight: 640, maxHeight: .infinity)
         .background { ThemeBackground(theme: theme) }
         .ignoresSafeArea()
         .background(SettingsWindowStyler())
