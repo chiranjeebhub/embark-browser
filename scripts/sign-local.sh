@@ -47,8 +47,11 @@ elif [ ! -f "$KEYCHAIN" ]; then
     -out "$WORK/identity.p12" -passout "pass:$PASSWORD"
   security create-keychain -p "$PASSWORD" "$KEYCHAIN"
   security set-keychain-settings "$KEYCHAIN"
-  security import "$WORK/identity.p12" -k "$KEYCHAIN" -P "$PASSWORD" -T /usr/bin/codesign >/dev/null
+  # security may export the key too (scripts/setup-updates.sh), so it doesn't ask for the
+  # keychain password. A copy of the identity stays next to the keychain for the same reason.
+  security import "$WORK/identity.p12" -k "$KEYCHAIN" -P "$PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASSWORD" "$KEYCHAIN" >/dev/null
+  (umask 077; cp "$WORK/identity.p12" "$DIR/identity.p12")
 fi
 
 security unlock-keychain -p "$(cat "$PASSWORD_FILE")" "$KEYCHAIN"
