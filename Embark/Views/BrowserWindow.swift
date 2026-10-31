@@ -9,6 +9,8 @@ struct BrowserWindow: View {
     /// and slides away shortly after the pointer leaves it. Toggling it pins it open.
     @State private var isPeeking = false
     @State private var hidePeek: Task<Void, Never>?
+    /// The pointer is over the peeking sidebar (as its hover last reported).
+    @State private var isPointerOverPeek = false
     @State private var sidebarShortcut: Any?
     /// Where a tab dragged over the page would land, for the split preview.
     @State private var pageDropZone: PageDropZone?
@@ -85,7 +87,7 @@ struct BrowserWindow: View {
         }
         .onChange(of: store.selectedTab?.id) { if pool.findTabID != nil { pool.closeFind() } }
         .onChange(of: visibleTabIDs) { old, new in pool.tabsLeftScreen(old.subtracting(new)) }
-        .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false }
+        .onChange(of: store.isSidebarVisible) { hidePeek?.cancel(); isPeeking = false; isPointerOverPeek = false }
         // While peeking, the card draws its own traffic lights (see CardTrafficLights). With the
         // sidebar on the right they stay above the page.
         .background(WindowButtons(isVisible: store.isSidebarVisible || onRight))
@@ -95,7 +97,7 @@ struct BrowserWindow: View {
         .animation(.smooth(duration: 0.35), value: store.selectedSpaceID)
         .animation(.snappy(duration: 0.2), value: store.isCommandBarOpen)
         .task { await sleepIdleTabs() }
-        .onAppear(perform: installSidebarShortcut)
+        .onAppear { installSidebarShortcut(); MenuTracking.start() }
         .onDisappear { sidebarShortcut.map(NSEvent.removeMonitor); sidebarShortcut = nil }
     }
 
@@ -165,14 +167,41 @@ struct BrowserWindow: View {
 
     private func peek(_ show: Bool) {
         hidePeek?.cancel()
+        isPointerOverPeek = show
         if show {
             withAnimation(.sidebar) { isPeeking = true }
         } else {
             hidePeek = Task {
-                try? await Task.sleep(for: .seconds(0.3))
-                guard !Task.isCancelled else { return }
+                // A menu, popover or sheet opened from the sidebar (Edit Space, the icon picker,
+                // a profile menu…) takes the pointer off it, but hiding the sidebar would pull
+                // the thing being used away with it. Wait until nothing is open, and stay quiet for
+                // a moment so a menu item that opens a popover doesn't slip through between them.
+                var quietChecks = 0
+                while quietChecks < 2 {
+                    try? await Task.sleep(for: .seconds(0.15))
+                    guard !Task.isCancelled else { return }
+                    quietChecks = isPeekHeldOpen ? 0 : quietChecks + 1
+                }
+                guard !isPointerOverPeek else { return }
                 withAnimation(.sidebar) { isPeeking = false }
             }
+        }
+    }
+
+    /// Something that belongs to the peeking sidebar is still open.
+    private var isPeekHeldOpen: Bool {
+        if store.isCreatingSpace || MenuTracking.isTracking { return true }
+        guard let window else { return false }
+        if window.attachedSheet != nil { return true }
+        // Popovers (and popovers opened from them, such as the icon picker) are child windows.
+        return NSApp.windows.contains { other in
+            guard other !== window, other.isVisible else { return false }
+            var parent = other.parent
+            while let next = parent {
+                if next === window { return true }
+                parent = next.parent
+            }
+            return false
         }
     }
 
@@ -547,5 +576,24 @@ private struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { if window !== view.window { window = view.window } }
+    }
+}
+
+/// Whether a menu (a context menu, a pop-up menu, or the menu bar) is open in this app.
+@MainActor enum MenuTracking {
+    private(set) static var isTracking = false
+    private static var observers: [Any] = []
+
+    static func start() {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { isTracking = true }
+            },
+            center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { isTracking = false }
+            },
+        ]
     }
 }
