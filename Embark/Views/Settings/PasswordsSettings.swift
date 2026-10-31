@@ -24,30 +24,43 @@ struct PasswordsSettings: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
+        SettingsPage(pane: .passwords) {
+            HStack(spacing: 10) {
                 Picker("Profile", selection: Binding(get: { selectedProfileID }, set: { profileID = $0; revealed = [:] })) {
                     ForEach(store.profiles) { profile in
                         Text(profile.name.isEmpty ? "Untitled" : profile.name).tag(Optional(profile.id))
                     }
                 }
+                .labelsHidden()
                 .fixedSize()
                 Spacer()
-                TextField("Search", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 200)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    TextField("Search", text: $search).textFieldStyle(.plain)
+                }
+                .padding(.horizontal, 10)
+                .frame(width: 210, height: 26)
+                .background(.primary.opacity(0.06), in: .capsule)
             }
-            List {
-                ForEach(shown) { login in row(login) }
-            }
-            .listStyle(.inset)
-            .overlay {
-                if shown.isEmpty {
-                    ContentUnavailableView(search.isEmpty ? "No Saved Passwords" : "No Matches", systemImage: "key",
-                                           description: Text(search.isEmpty ? "Embark offers to save a password after you sign in to a site." : ""))
+            .padding(.top, 22)
+            .padding(.bottom, 6)
+            .id("Saved passwords")
+
+            if shown.isEmpty {
+                ContentUnavailableView(search.isEmpty ? "No Saved Passwords" : "No Matches", systemImage: "key",
+                                       description: Text(search.isEmpty ? "Embark offers to save a password after you sign in to a site." : ""))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(shown) { login in
+                        row(login)
+                        if login.id != shown.last?.id { Divider() }
+                    }
                 }
             }
-            HStack {
+
+            HStack(spacing: 8) {
                 Button("Import…", action: importCSV)
                     .help("Import a CSV file exported from the Passwords app, Safari, Chrome or a password manager")
                 Button("Export…") { Task { await exportCSV() } }
@@ -56,28 +69,31 @@ struct PasswordsSettings: View {
                     Text(notice).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("Kept in your Mac's Keychain.").font(.system(size: 11)).foregroundStyle(.secondary)
+                Label("Kept in your Mac’s Keychain", systemImage: "lock.fill")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
+            .padding(.top, 16)
+
             if !passwords.neverSaveHosts.isEmpty {
-                DisclosureGroup("Never saved for \(passwords.neverSaveHosts.count) sites") {
+                SettingsSection("Never saved") {
                     ForEach(passwords.neverSaveHosts.sorted(), id: \.self) { host in
                         HStack {
-                            Text(host).font(.system(size: 12))
+                            FaviconView(url: URL(string: "https://\(host)") ?? URL(string: "https://example.com")!, size: 16)
+                            Text(host)
                             Spacer()
                             Button("Remove") { passwords.allowSaving(host) }.controlSize(.small)
                         }
+                        .padding(.vertical, 8)
                     }
                 }
-                .font(.system(size: 12))
             }
         }
-        .padding(20)
         .onAppear { passwords.reload() }
     }
 
     private func row(_ login: SavedLogin) -> some View {
         HStack(spacing: 10) {
-            FaviconView(url: URL(string: "https://\(login.host)")!, size: 20)
+            FaviconView(url: URL(string: "https://\(login.host)") ?? URL(string: "https://example.com")!, size: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(login.host).font(.system(size: 13, weight: .medium))
                 Text(login.username.isEmpty ? "No user name" : login.username)
@@ -98,7 +114,7 @@ struct PasswordsSettings: View {
                 .help("Delete")
         }
         .buttonStyle(.borderless)
-        .padding(.vertical, 2)
+        .padding(.vertical, 9)
     }
 
     private func reveal(_ login: SavedLogin) async {

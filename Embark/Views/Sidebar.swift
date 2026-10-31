@@ -1250,7 +1250,7 @@ private struct SpaceGlyph: View {
                 ForEach(store.profiles) { profile in Text(profile.name).tag(profile.id) }
             }
             .pickerStyle(.menu)
-            Button("Edit Profiles…") { openSettings() }
+            Button("Edit Profiles…") { openSettings(.profiles) }
             Divider()
             Button("Delete Space…", role: .destructive) { confirmsDelete = true }
                 .disabled(store.spaces.count < 2)

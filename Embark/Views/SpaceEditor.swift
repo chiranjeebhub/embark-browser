@@ -229,7 +229,7 @@ struct EditSpacePopover: View {
                         }
                         .labelsHidden()
                     }
-                    Button("Edit Profiles…") { openSettings() }
+                    Button("Edit Profiles…") { openSettings(.profiles) }
                         .buttonStyle(.link)
                         .font(.system(size: 12))
                     Text("Switching profiles signs this space into the other profile's accounts. Tabs and favorites stay; pages reload.")
