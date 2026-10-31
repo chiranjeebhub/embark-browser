@@ -27,6 +27,8 @@ struct SettingsPage<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
+            // The page is a card below the title bar, so no edge fade where the title bar is.
+            .scrollEdgeEffectHidden(true, for: .top)
             .onAppear { scroll(proxy) }
             .onChange(of: highlight) { scroll(proxy) }
         }
