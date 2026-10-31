@@ -25,7 +25,7 @@ settings:
     # (.github/workflows/release.yml). The public key is the one scripts/setup-updates.sh
     # prints; while it's empty, the updater stays off.
     SPARKLE_FEED_URL: https://github.com/chiranjeebhub/embark-browser/releases/latest/download/appcast.xml
-    SPARKLE_PUBLIC_KEY: ""
+    SPARKLE_PUBLIC_KEY: "d9qwOK7/PjRt6MvfSb3Y4N1A517HdHxTOkfSdQwKTUg="
 targets:
   Embark:
     type: application
