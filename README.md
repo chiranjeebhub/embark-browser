@@ -55,6 +55,19 @@ The first run creates an "Embark Local Dev" identity in its own keychain under
 "Always Allow" once after that; later rebuilds signed the same way are remembered. CI
 doesn't sign and isn't affected.
 
+With an Apple developer team, sign with it instead to turn on Chromium's Touch ID passkeys
+(saved in Embark and unlocked with your fingerprint). They need a keychain group, which macOS
+only allows for apps signed by a team with a provisioning profile:
+
+```sh
+EMBARK_TEAM=<team id> scripts/sign-team.sh path/to/Embark.app
+```
+
+It uses the newest macOS profile Xcode has made for the team that includes this Mac; the
+script says how to make one if there is none. Releases are still signed with the self-signed
+identity, so an automatic update replaces a team-signed copy and turns Touch ID passkeys off
+again until you re-sign.
+
 ### Releases and updates
 
 Releases are built by GitHub Actions and installed copies update themselves with Sparkle. See
